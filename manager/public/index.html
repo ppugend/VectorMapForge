@@ -257,7 +257,10 @@
                     <td>${statusHtml}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
                     <td>${formatDate(s.lastCheck)}<br><small>${s.remoteMd5 ? s.remoteMd5.substring(0,8) : '-'}</small></td>
                     <td><div class="action-cell">
-                        <button onclick="updateRegion('${r.id}', '${btnText}')">${btnText}</button>
+                        ${buildDisabled
+                            ? `<button disabled title="빌드는 데스크탑에서 진행 후 Import하세요" style="cursor:not-allowed;opacity:0.5;">${btnText}</button>`
+                            : `<button onclick="updateRegion('${r.id}', '${btnText}')">${btnText}</button>`
+                        }
                         ${r.hasMbtiles ? `<button class="danger sm" onclick="removeTiles('${r.id}', '${r.name}')">🗑 Remove (${fmtSize(r.mbtilesSize)})</button>` : ''}
                     </div></td>`;
                 body.appendChild(tr);
@@ -469,8 +472,22 @@
             }
         }
 
+        // ── 빌드 비활성화 체크 ─────────────────────────────────────
+        let buildDisabled = false;
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const cfg = await res.json();
+                buildDisabled = cfg.buildDisabled;
+                if (buildDisabled) {
+                    document.getElementById('checkBtn').title = 'Build is disabled on this server';
+                }
+            } catch(e) {}
+        }
+
         fetchRegions();
         pollStatus();
+        loadConfig();
     </script>
 </body>
 </html>

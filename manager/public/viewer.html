@@ -21,22 +21,11 @@
         const p = new URLSearchParams(window.location.search);
         const region = p.get('region') || 'south-korea';
 
-        const tileHost = `http://${window.location.hostname}:8081`;
-        const styleUrl = `${tileHost}/styles/${region}-pretty/style.json`;
+        const styleUrl = `${window.location.origin}/styles/${region}-pretty/style.json`;
 
-        // Fetch style and fix URLs that tileserver-rs may not have rewritten
+        // Style endpoint rewrites all URLs (mbtiles://, sprite, glyphs) server-side
         const styleRes = await fetch(styleUrl);
         const style = await styleRes.json();
-        for (const src of Object.values(style.sources || {})) {
-            if (typeof src.url === 'string' && src.url.startsWith('mbtiles://')) {
-                const id = src.url.slice('mbtiles://'.length);
-                src.url = `${tileHost}/data/${id}.json`;
-            }
-        }
-        // Use local sprite served by manager (tileserver-rs doesn't serve static files)
-        if (style.sprite) {
-            style.sprite = `${window.location.origin}/sprites/sprite`;
-        }
 
         // Resolve default center/zoom from TileJSON if not provided in URL params
         let defaultLng = 0, defaultLat = 0, defaultZoom = 2;
