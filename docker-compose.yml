@@ -17,12 +17,12 @@ services:
   manager:
     image: node:18-alpine
     container_name: osm_manager
-    working_dir: /app
+    working_dir: /osm_manager_app
     ports:
       - "8082:3000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./manager:/app
+      - ./manager:/osm_manager_app
       - osm_data:/osm_data
       - osm_temp:/osm_temp
     environment:

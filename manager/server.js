@@ -25,34 +25,37 @@ files = "/data/tileserver"
 [server]
 host = "0.0.0.0"
 port = 8080
+public_url = "http://localhost:8081"
 cors_origins = ["*"]
 `;
-
-  // Add sources
-  for (const regionId in regionsDb) {
-    const r = regionsDb[regionId];
-    if (r.localMd5) {
-      toml += `
+// Add sources
+for (const regionId in regionsDb) {
+  const r = regionsDb[regionId];
+  if (r.localMd5) {
+    toml += `
 [[sources]]
-id = "${regionId}"
+id = "openmaptiles"
 type = "mbtiles"
 path = "/data/mbtiles/${regionId}.mbtiles"
 `;
-    }
   }
+}
 
-  // Add styles
-  for (const regionId in regionsDb) {
-    const r = regionsDb[regionId];
-    if (r.localMd5) {
-      toml += `
+// Add styles
+for (const regionId in regionsDb) {
+  const r = regionsDb[regionId];
+  if (r.localMd5) {
+    toml += `
 [[styles]]
 id = "${regionId}-pretty"
 path = "/data/tileserver/styles/osm-bright/style.json"
-`;
-    }
-  }
 
+[styles.tilejson]
+center = [127.0, 37.5, 10]
+zoom = 10
+`;
+  }
+}
   return toml;
 }
 
@@ -72,12 +75,10 @@ function bootstrap() {
   });
 
   if (!fs.existsSync(TILESERVER_CONFIG_PATH)) {
-    // Generate an empty config initially
-    fs.writeFileSync(TILESERVER_CONFIG_PATH, generateTomlConfig({}));
+    // Generate an empty config initially or from existing DB
+    fs.writeFileSync(TILESERVER_CONFIG_PATH, generateTomlConfig(db.regions));
   }
 }
-bootstrap();
-
 const REGIONS = [
   { id: 'monaco', url: 'https://download.geofabrik.de/europe/monaco-latest.osm.pbf', name: 'Monaco' },
   { id: 'andorra', url: 'https://download.geofabrik.de/europe/andorra-latest.osm.pbf', name: 'Andorra' },
@@ -88,6 +89,8 @@ let db = { regions: {} };
 if (fs.existsSync(DB_PATH)) {
   try { db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); } catch (e) {}
 }
+
+bootstrap();
 
 function saveDb() { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
 
