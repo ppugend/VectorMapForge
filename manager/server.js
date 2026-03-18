@@ -358,6 +358,9 @@ app.post('/api/update', async (req, res) => {
       currentTask.status = currentTask.aborted ? 'Cancelled' : 'Error';
       log(`ERROR: ${e.message}`);
     }
+    // Clean up PBF and temp mbtiles regardless of failure reason
+    fs.unlink(pbfPath, () => {});
+    fs.unlink(tempMbtilesPath, () => {});
     setTimeout(() => { currentTask = null; }, 20000);
   }
 });
