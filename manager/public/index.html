@@ -21,6 +21,8 @@
         button.danger:hover { background: #a71d2a; }
         button.export { background: #28a745; }
         button.cancel { background: #ffc107; color: #333; }
+        button.sm { padding: 4px 10px; font-size: 12px; }
+        .action-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
         .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; white-space: nowrap; }
         .status-up-to-date { background: #d4edda; color: #155724; }
         .status-update-available { background: #fff3cd; color: #856404; }
@@ -121,6 +123,12 @@
     <script>
         function formatDate(iso) { if (!iso) return '-'; return new Date(iso).toLocaleString(); }
         function ts() { return new Date().toLocaleTimeString(); }
+        function fmtSize(bytes) {
+            if (!bytes) return '';
+            if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+            return (bytes / 1024).toFixed(0) + ' KB';
+        }
 
         // ── 로그 토글 ──────────────────────────────────────────
         let logsCollapsed = false;
@@ -225,7 +233,7 @@
             page.forEach(r => {
                 const s = r.status;
                 let statusHtml = '', btnText = 'Download / Build';
-                if (!s.localMd5) {
+                if (!r.hasMbtiles) {
                     statusHtml = '<span class="status-badge status-not-downloaded">Not Downloaded</span>';
                 } else if (s.localMd5 !== s.remoteMd5 && s.remoteMd5) {
                     statusHtml = '<span class="status-badge status-update-available">Update Available</span>';
@@ -236,15 +244,15 @@
                 }
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td><input type="checkbox" name="regionSelect" value="${r.id}" ${!s.localMd5 ? 'disabled' : ''}></td>
+                    <td><input type="checkbox" name="regionSelect" value="${r.id}" ${!r.hasMbtiles ? 'disabled' : ''}></td>
                     <td><strong>${r.name}</strong><br><small>${r.id}</small></td>
                     <td><small>${r.parent || '-'}</small></td>
                     <td>${statusHtml}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
                     <td>${formatDate(s.lastCheck)}<br><small>${s.remoteMd5 ? s.remoteMd5.substring(0,8) : '-'}</small></td>
-                    <td>
+                    <td><div class="action-cell">
                         <button onclick="updateRegion('${r.id}', '${btnText}')">${btnText}</button>
-                        ${s.localMd5 ? `<button class="danger" onclick="removeRegion('${r.id}')">Remove</button>` : ''}
-                    </td>`;
+                        ${r.hasMbtiles ? `<button class="danger sm" onclick="removeTiles('${r.id}', '${r.name}')">🗑 Remove (${fmtSize(r.mbtilesSize)})</button>` : ''}
+                    </div></td>`;
                 body.appendChild(tr);
             });
 
@@ -328,8 +336,8 @@
             } catch (err) { alert(err.message); }
         }
 
-        async function removeRegion(id) {
-            if (!confirm(`Permanently remove data for ${id}?`)) return;
+        async function removeTiles(id, name) {
+            if (!confirm(`"${name}" 타일 데이터를 삭제하시겠습니까?\n지도 서비스에서 즉시 제거됩니다.`)) return;
             try {
                 const res = await fetch('/api/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionId: id }) });
                 if (!res.ok) throw new Error((await res.json()).error);

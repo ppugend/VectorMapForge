@@ -234,33 +234,33 @@ app.post('/api/cancel', (req, res) => {
   setTimeout(() => { currentTask = null; }, 5000);
 });
 
-// API: Remove region
+// API: Remove built tiles (mbtiles + db entry)
 app.post('/api/remove', async (req, res) => {
   const { regionId } = req.body;
   if (!regionId) return res.status(400).json({ error: 'No regionId' });
-  
   try {
     const mbtilesPath = path.join(DATA_DIR, 'mbtiles', `${regionId}.mbtiles`);
-    const pbfPath = path.join(DATA_DIR, 'pbf', `${regionId}.osm.pbf`);
-    
     if (fs.existsSync(mbtilesPath)) fs.unlinkSync(mbtilesPath);
-    if (fs.existsSync(pbfPath)) fs.unlinkSync(pbfPath);
-    
     delete db.regions[regionId];
     saveDb();
-    
     fs.writeFileSync(TILESERVER_CONFIG_PATH, generateTomlConfig(db.regions));
     await runCommand('docker', ['kill', '-s', 'SIGHUP', process.env.TILESERVER_CONTAINER]).catch(() => {});
-    
-    res.json({ message: `Removed ${regionId}` });
+    res.json({ message: `Removed tiles for ${regionId}` });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+
 app.get('/api/regions', (req, res) => {
-  const regionsWithStatus = geofabrikRegions.map(r => ({ ...r, status: db.regions[r.id] || {} }));
-  regionsWithStatus.sort((a, b) => (b.status.localMd5 ? 1 : 0) - (a.status.localMd5 ? 1 : 0));
+  const regionsWithStatus = geofabrikRegions.map(r => {
+    const status = db.regions[r.id] || {};
+    const mbtilesPath = path.join(DATA_DIR, 'mbtiles', `${r.id}.mbtiles`);
+    const hasMbtiles = fs.existsSync(mbtilesPath);
+    const mbtilesSize = hasMbtiles ? fs.statSync(mbtilesPath).size : 0;
+    return { ...r, status, hasMbtiles, mbtilesSize };
+  });
+  regionsWithStatus.sort((a, b) => (b.hasMbtiles ? 1 : 0) - (a.hasMbtiles ? 1 : 0));
   res.json(regionsWithStatus);
 });
 
@@ -343,7 +343,8 @@ app.post('/api/update', async (req, res) => {
     if (currentTask.aborted) throw new Error('Aborted');
 
     fs.renameSync(tempMbtilesPath, mbtilesPath);
-    db.regions[region.id] = { localMd5: remoteMd5, remoteMd5, lastUpdate: new Date().toISOString() };
+    fs.unlink(pbfPath, () => {}); // PBF is no longer needed after build
+    db.regions[region.id] = { sourceUrl: region.url, localMd5: remoteMd5, remoteMd5, lastUpdate: new Date().toISOString() };
     saveDb();
     generateRegionStyle(region.id);
     fs.writeFileSync(TILESERVER_CONFIG_PATH, generateTomlConfig(db.regions));
