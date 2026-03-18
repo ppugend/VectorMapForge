@@ -28,16 +28,66 @@ const TILESERVER_CONFIG_PATH = path.join(TILESERVER_ROOT, 'config.toml');
 
 const upload = multer({ dest: '/tmp/uploads/' });
 
-const REGIONS = [
-  { id: 'monaco',      url: 'https://download.geofabrik.de/europe/monaco-latest.osm.pbf',      name: 'Monaco',      center: [7.42, 43.73] },
-  { id: 'andorra',     url: 'https://download.geofabrik.de/europe/andorra-latest.osm.pbf',     name: 'Andorra',     center: [1.52, 42.51] },
-  { id: 'south-korea', url: 'https://download.geofabrik.de/asia/south-korea-latest.osm.pbf',   name: 'South Korea', center: [127.0, 37.5] },
-  { id: 'japan',       url: 'https://download.geofabrik.de/asia/japan-latest.osm.pbf',          name: 'Japan',       center: [139.6, 35.7] },
-  { id: 'taiwan',      url: 'https://download.geofabrik.de/asia/taiwan-latest.osm.pbf',         name: 'Taiwan',      center: [121.0, 23.7] },
-  { id: 'china',       url: 'https://download.geofabrik.de/asia/china-latest.osm.pbf',          name: 'China',       center: [116.4, 39.9] },
-  { id: 'vietnam',     url: 'https://download.geofabrik.de/asia/vietnam-latest.osm.pbf',        name: 'Vietnam',     center: [106.7, 10.8] },
-  { id: 'thailand',    url: 'https://download.geofabrik.de/asia/thailand-latest.osm.pbf',       name: 'Thailand',    center: [100.5, 13.8] }
-];
+const GEOFABRIK_INDEX_PATH = path.join(DATA_DIR, 'geofabrik-index.json');
+let geofabrikRegions = [];
+
+function getRegionById(id) {
+  return geofabrikRegions.find(r => r.id === id) || null;
+}
+
+function getBboxCenter(feature) {
+  const coords = [];
+  function collect(arr) {
+    if (!Array.isArray(arr)) return;
+    if (typeof arr[0] === 'number') { coords.push(arr); return; }
+    arr.forEach(collect);
+  }
+  collect(feature.geometry && feature.geometry.coordinates);
+  if (!coords.length) return [0, 0];
+  const lons = coords.map(c => c[0]);
+  const lats = coords.map(c => c[1]);
+  return [
+    +((Math.min(...lons) + Math.max(...lons)) / 2).toFixed(4),
+    +((Math.min(...lats) + Math.max(...lats)) / 2).toFixed(4)
+  ];
+}
+
+function fetchAndCacheGeofabrikIndex() {
+  return new Promise((resolve, reject) => {
+    https.get('https://download.geofabrik.de/index-v1.json', (res) => {
+      let data = '';
+      res.on('data', d => data += d);
+      res.on('end', () => {
+        try {
+          const geojson = JSON.parse(data);
+          geofabrikRegions = geojson.features
+            .filter(f => f.properties && f.properties.urls && f.properties.urls.pbf)
+            .map(f => ({
+              id: f.properties.id,
+              name: f.properties.name,
+              url: f.properties.urls.pbf,
+              parent: f.properties.parent || null,
+              center: getBboxCenter(f)
+            }));
+          fs.writeFileSync(GEOFABRIK_INDEX_PATH, JSON.stringify(geofabrikRegions, null, 2));
+          console.log(`Fetched and cached ${geofabrikRegions.length} Geofabrik regions`);
+          resolve();
+        } catch(e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+function loadGeofabrikIndex() {
+  if (fs.existsSync(GEOFABRIK_INDEX_PATH)) {
+    try {
+      geofabrikRegions = JSON.parse(fs.readFileSync(GEOFABRIK_INDEX_PATH, 'utf8'));
+      console.log(`Loaded ${geofabrikRegions.length} Geofabrik regions from cache`);
+      return Promise.resolve();
+    } catch(e) {}
+  }
+  return fetchAndCacheGeofabrikIndex();
+}
 
 let db = { regions: {} };
 if (fs.existsSync(DB_PATH)) {
@@ -49,7 +99,7 @@ function generateTomlConfig(regionsDb) {
   for (const regionId in regionsDb) {
     const r = regionsDb[regionId];
     if (r.localMd5) {
-      const region = REGIONS.find(reg => reg.id === regionId);
+      const region = getRegionById(regionId);
       const [lon, lat] = region ? region.center : [0, 0];
       // Each region gets its OWN source id to avoid collision
       toml += `\n[[sources]]\nid = "${regionId}"\ntype = "mbtiles"\npath = "/data/mbtiles/${regionId}.mbtiles"\n`;
@@ -100,6 +150,7 @@ function bootstrap() {
   }
 }
 bootstrap();
+loadGeofabrikIndex().catch(e => console.error('Failed to load Geofabrik index:', e.message));
 
 function saveDb() { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
 
@@ -208,7 +259,7 @@ app.post('/api/remove', async (req, res) => {
 });
 
 app.get('/api/regions', (req, res) => {
-  const regionsWithStatus = REGIONS.map(r => ({ ...r, status: db.regions[r.id] || {} }));
+  const regionsWithStatus = geofabrikRegions.map(r => ({ ...r, status: db.regions[r.id] || {} }));
   regionsWithStatus.sort((a, b) => (b.status.localMd5 ? 1 : 0) - (a.status.localMd5 ? 1 : 0));
   res.json(regionsWithStatus);
 });
@@ -224,7 +275,10 @@ app.get('/api/status', (req, res) => {
 
 app.post('/api/check-updates', async (req, res) => {
   const results = [];
-  for (const region of REGIONS) {
+  const downloadedIds = Object.keys(db.regions).filter(id => db.regions[id].localMd5);
+  for (const regionId of downloadedIds) {
+    const region = getRegionById(regionId);
+    if (!region) { results.push({ id: regionId, name: regionId, error: true }); continue; }
     try {
       const get = region.url.startsWith('https') ? https.get : http.get;
       const fetchText = (url) => new Promise((resolve, reject) => {
@@ -235,12 +289,11 @@ app.post('/api/check-updates', async (req, res) => {
       });
       const remoteMd5Raw = await fetchText(region.url + '.md5');
       const remoteMd5 = remoteMd5Raw.split(/\s+/)[0];
-      if (!db.regions[region.id]) db.regions[region.id] = {};
       db.regions[region.id].remoteMd5 = remoteMd5;
       db.regions[region.id].lastCheck = new Date().toISOString();
       saveDb();
       const local = db.regions[region.id];
-      results.push({ id: region.id, name: region.name, hasUpdate: !!(local.localMd5 && local.localMd5 !== remoteMd5), isNew: !local.localMd5 });
+      results.push({ id: region.id, name: region.name, hasUpdate: !!(local.localMd5 && local.localMd5 !== remoteMd5), isNew: false });
     } catch (e) {
       results.push({ id: region.id, name: region.name, error: true });
     }
@@ -250,7 +303,7 @@ app.post('/api/check-updates', async (req, res) => {
 
 app.post('/api/update', async (req, res) => {
   const { regionId } = req.body;
-  const region = REGIONS.find(r => r.id === regionId);
+  const region = getRegionById(regionId);
   if (!region || currentTask) return res.status(400).json({ error: 'Busy' });
 
   res.json({ message: 'Update started' });
@@ -340,6 +393,15 @@ app.post('/api/import', upload.single('file'), (req, res) => {
     res.json({ message: 'Imported' });
   } catch (e) { res.status(500).json({ error: e.message }); }
   finally { fs.unlinkSync(req.file.path); }
+});
+
+app.post('/api/refresh-geofabrik', async (req, res) => {
+  try {
+    await fetchAndCacheGeofabrikIndex();
+    res.json({ count: geofabrikRegions.length });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.listen(PORT, () => console.log('Manager running on 3000'));

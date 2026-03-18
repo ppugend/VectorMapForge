@@ -42,6 +42,11 @@
         #taskElapsed { color: #aaa; font-size: 12px; }
         
         .links { margin-bottom: 20px; font-size: 14px; padding: 15px; background: #eef; border-radius: 4px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .search-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+        .search-row input { flex: 1; min-width: 200px; padding: 7px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+        .pagination { display: flex; gap: 8px; align-items: center; margin-top: 15px; justify-content: center; flex-wrap: wrap; }
+        .pagination button { padding: 5px 14px; font-size: 13px; }
+        .pagination span { font-size: 13px; color: #555; }
         .import-section { border: 1px dashed #ccc; padding: 10px; border-radius: 4px; background: #fff; display: flex; align-items: center; gap: 10px; }
         .map-link { color: #28a745 !important; font-weight: bold; }
 
@@ -73,20 +78,27 @@
             <span id="mapLinks">No maps ready</span>
         </div>
 
+        <div class="search-row">
+            <input type="text" id="searchInput" placeholder="Search by region name or ID..." oninput="onSearch(this.value)">
+            <span id="regionCount" style="color:#666; font-size:13px; white-space:nowrap;"></span>
+            <button class="secondary" onclick="refreshGeofabrik()" id="refreshBtn" title="Re-fetch Geofabrik region list">↻ Refresh List</button>
+        </div>
         <table>
             <thead>
                 <tr>
                     <th><input type="checkbox" onclick="toggleAll(this)"></th>
                     <th>Region</th>
+                    <th>Parent</th>
                     <th>Local Status</th>
                     <th>Latest Check</th>
                     <th>Action</th>
                 </tr>
             </thead>
             <tbody id="regionsBody">
-                <tr><td colspan="5">Loading regions...</td></tr>
+                <tr><td colspan="6">Loading regions...</td></tr>
             </tbody>
         </table>
+        <div class="pagination" id="pagination"></div>
     </div>
 
     <div id="toastContainer"></div>
@@ -175,19 +187,44 @@
             clearInterval(elapsedTimer); elapsedTimer = null;
         }
 
-        // ── 리전 목록 ──────────────────────────────────────────
+        // ── 리전 목록 + 검색 + 페이지네이션 ───────────────────────
+        let allRegions = [];
+        let filteredRegions = [];
+        let currentPage = 1;
+        const PAGE_SIZE = 20;
+
         async function fetchRegions() {
             const res = await fetch('/api/regions', { cache: 'no-store' });
-            const regions = await res.json();
-            const body = document.getElementById('regionsBody');
-            const mapLinks = document.getElementById('mapLinks');
-            body.innerHTML = '';
-            let readyMaps = [];
+            allRegions = await res.json();
+            applyFilter();
+        }
 
-            regions.forEach(r => {
+        function onSearch(val) {
+            currentPage = 1;
+            applyFilter(val);
+        }
+
+        function applyFilter(val) {
+            const q = (val !== undefined ? val : document.getElementById('searchInput').value).toLowerCase().trim();
+            filteredRegions = q
+                ? allRegions.filter(r => r.name.toLowerCase().includes(q) || r.id.toLowerCase().includes(q) || (r.parent || '').toLowerCase().includes(q))
+                : allRegions;
+            renderTable();
+            updateMapLinks();
+        }
+
+        function renderTable() {
+            const body = document.getElementById('regionsBody');
+            body.innerHTML = '';
+            const total = filteredRegions.length;
+            const start = (currentPage - 1) * PAGE_SIZE;
+            const page = filteredRegions.slice(start, start + PAGE_SIZE);
+
+            document.getElementById('regionCount').textContent = `${total.toLocaleString()} regions`;
+
+            page.forEach(r => {
                 const s = r.status;
                 let statusHtml = '', btnText = 'Download / Build';
-                if (s.localMd5) readyMaps.push(`<a class="map-link" href="/viewer.html?region=${r.id}" target="_blank">🗺️ ${r.name}</a>`);
                 if (!s.localMd5) {
                     statusHtml = '<span class="status-badge status-not-downloaded">Not Downloaded</span>';
                 } else if (s.localMd5 !== s.remoteMd5 && s.remoteMd5) {
@@ -201,6 +238,7 @@
                 tr.innerHTML = `
                     <td><input type="checkbox" name="regionSelect" value="${r.id}" ${!s.localMd5 ? 'disabled' : ''}></td>
                     <td><strong>${r.name}</strong><br><small>${r.id}</small></td>
+                    <td><small>${r.parent || '-'}</small></td>
                     <td>${statusHtml}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
                     <td>${formatDate(s.lastCheck)}<br><small>${s.remoteMd5 ? s.remoteMd5.substring(0,8) : '-'}</small></td>
                     <td>
@@ -209,7 +247,51 @@
                     </td>`;
                 body.appendChild(tr);
             });
-            mapLinks.innerHTML = readyMaps.length > 0 ? readyMaps.join(' ') : 'No maps ready';
+
+            renderPagination(total);
+        }
+
+        function renderPagination(total) {
+            const totalPages = Math.ceil(total / PAGE_SIZE);
+            const el = document.getElementById('pagination');
+            if (totalPages <= 1) { el.innerHTML = ''; return; }
+            el.innerHTML = `
+                <button onclick="gotoPage(1)" ${currentPage <= 1 ? 'disabled' : ''}>«</button>
+                <button onclick="gotoPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>‹ Prev</button>
+                <span>Page ${currentPage} / ${totalPages}</span>
+                <button onclick="gotoPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''}>Next ›</button>
+                <button onclick="gotoPage(${totalPages})" ${currentPage >= totalPages ? 'disabled' : ''}>»</button>
+            `;
+        }
+
+        function gotoPage(p) {
+            const totalPages = Math.ceil(filteredRegions.length / PAGE_SIZE);
+            if (p < 1 || p > totalPages) return;
+            currentPage = p;
+            renderTable();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function updateMapLinks() {
+            const readyMaps = allRegions
+                .filter(r => r.status && r.status.localMd5)
+                .map(r => `<a class="map-link" href="/viewer.html?region=${r.id}" target="_blank">🗺️ ${r.name}</a>`);
+            document.getElementById('mapLinks').innerHTML = readyMaps.length > 0 ? readyMaps.join(' ') : 'No maps ready';
+        }
+
+        async function refreshGeofabrik() {
+            const btn = document.getElementById('refreshBtn');
+            btn.disabled = true; btn.textContent = '↻ Fetching...';
+            try {
+                const res = await fetch('/api/refresh-geofabrik', { method: 'POST' });
+                const data = await res.json();
+                showToast(`Geofabrik 목록 갱신 완료 (${data.count}개 리전)`, 'success', 4000);
+                fetchRegions();
+            } catch(e) {
+                showToast('목록 갱신 실패: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false; btn.textContent = '↻ Refresh List';
+            }
         }
 
         // ── Check Updates → 토스트 ─────────────────────────────
