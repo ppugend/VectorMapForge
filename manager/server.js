@@ -218,10 +218,28 @@ function getPublicOrigin(req) {
 const publicApp = express();
 publicApp.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); next(); });
 
+publicApp.get('/', (req, res) => res.redirect('/tiles.html'));
 publicApp.get('/favicon.ico', (req, res) => res.redirect('/favicon.svg'));
 publicApp.get('/favicon.svg', (req, res) => res.sendFile(path.join(__dirname, 'public/favicon.svg')));
+publicApp.get('/tiles.html', (req, res) => res.sendFile(path.join(__dirname, 'public/tiles.html')));
 publicApp.get('/viewer.html', (req, res) => res.sendFile(path.join(__dirname, 'public/viewer.html')));
 publicApp.use('/sprites', express.static(path.join(__dirname, 'public/sprites')));
+
+// Served tiles list (public — no admin needed)
+publicApp.get('/api/tiles', (req, res) => {
+  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
+  const files = fs.existsSync(mbtilesDir) ? fs.readdirSync(mbtilesDir).filter(f => f.endsWith('.mbtiles')) : [];
+  const tiles = files.map(f => {
+    const id = f.replace('.mbtiles', '');
+    const p = path.join(mbtilesDir, f);
+    const size = fs.statSync(p).size;
+    const region = geofabrikRegions.find(r => r.id === id);
+    const status = db.regions[id] || {};
+    return { id, name: region ? region.name : id, size, lastUpdate: status.lastUpdate || null };
+  });
+  tiles.sort((a, b) => a.name.localeCompare(b.name));
+  res.json(tiles);
+});
 
 // TileJSON
 publicApp.get('/data/:id.json', (req, res) => {
@@ -295,6 +313,7 @@ publicApp.get('/fonts/:fontstack/:range.pbf', (req, res) => {
 const adminApp = express();
 adminApp.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); next(); });
 adminApp.use(express.json());
+adminApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
 adminApp.use(publicApp); // inherit all public routes
 adminApp.use('/debug.html', (req, res) => res.status(404).send('Not Found'));
 adminApp.use(express.static(path.join(__dirname, 'public')));
@@ -455,9 +474,14 @@ adminApp.post('/api/update', async (req, res) => {
     await runCommand('docker', [
       'run', '--rm',
       '-e', `JAVA_TOOL_OPTIONS=-Xmx${jvmMemory}`,
-      '--volumes-from', 'osm_manager',
+      '-v', `osm_persistent_data:${DATA_DIR}`,
+      '-v', `osm_build_temp:${TEMP_DIR}`,
       'ghcr.io/onthegomap/planetiler:latest',
       `--osm-path=${pbfPath}`, `--output=${tempMbtilesPath}`, `--tmpdir=${TEMP_DIR}/work`,
+      `--lake-centerlines-path=${DATA_DIR}/sources/lake_centerline.shp.zip`,
+      `--water-polygons-path=${DATA_DIR}/sources/water-polygons-split-3857.zip`,
+      `--natural-earth-path=${DATA_DIR}/sources/natural_earth_vector.sqlite.zip`,
+      `--wikidata-cache=${DATA_DIR}/sources/wikidata_names.json`,
       '--download', '--nodemap-type=array', '--force',
     ], log);
 
