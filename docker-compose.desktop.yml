@@ -30,6 +30,7 @@ services:
       - TEMP_DIR=/osm_temp
       - TILESERVER_CONFIG=/osm_data/tileserver/config.toml
       - TILESERVER_CONTAINER=osm_tileserver
+      - PLANETILER_JVM_MEMORY=${PLANETILER_JVM_MEMORY:-6g}
     # 이 command는 컨테이너 시작 시 소스코드와 환경을 자동으로 생성합니다.
     command: >
       sh -c "apk add --no-cache docker-cli curl tar unzip &&

@@ -334,10 +334,13 @@ app.post('/api/update', async (req, res) => {
     const remoteMd5 = remoteMd5Raw.split(/\s+/)[0];
 
     currentTask.status = 'Building Vectors...';
+    const jvmMemory = process.env.PLANETILER_JVM_MEMORY || '6g';
     await runCommand('docker', [
-      'run', '--rm', '--volumes-from', 'osm_manager', 'ghcr.io/onthegomap/planetiler:latest',
+      'run', '--rm',
+      '-e', `JAVA_TOOL_OPTIONS=-Xmx${jvmMemory}`,
+      '--volumes-from', 'osm_manager', 'ghcr.io/onthegomap/planetiler:latest',
       `--osm-path=${pbfPath}`, `--output=${tempMbtilesPath}`, `--tmpdir=${TEMP_DIR}/work`,
-      '--download', '--nodemap-type=sparsearray', '--force'
+      '--download', '--nodemap-type=array', '--force'
     ], log);
 
     if (currentTask.aborted) throw new Error('Aborted');

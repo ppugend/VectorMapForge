@@ -1,0 +1,58 @@
+services:
+  tileserver:
+    image: ghcr.io/vinayakkulkarni/tileserver-rs:latest
+    container_name: osm_tileserver
+    command: /app/tileserver-rs --config /data/tileserver/config.toml
+    ports:
+      - "8081:8080"
+    volumes:
+      - osm_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  manager:
+    image: node:18-alpine
+    container_name: osm_manager
+    working_dir: /osm_manager_app
+    ports:
+      - "8082:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./manager:/osm_manager_app
+      - osm_data:/osm_data
+      - osm_temp:/osm_temp
+    environment:
+      - DATA_DIR=/osm_data
+      - TEMP_DIR=/osm_temp
+      - TILESERVER_CONFIG=/osm_data/tileserver/config.toml
+      - TILESERVER_CONTAINER=osm_tileserver
+      - PLANETILER_JVM_MEMORY=${PLANETILER_JVM_MEMORY:-512m}
+      - NODE_OPTIONS=--max-old-space-size=256
+    command: >
+      sh -c "apk add --no-cache docker-cli curl tar unzip &&
+             npm install &&
+             if [ ! -d \"/osm_data/tileserver/styles/osm-bright\" ]; then
+               echo \"Provisioning styles...\" &&
+               mkdir -p /osm_data/tileserver/styles/osm-bright &&
+               curl -L https://github.com/openmaptiles/osm-bright-gl-style/archive/refs/heads/master.tar.gz | tar -xz -C /osm_data/tileserver/styles/osm-bright --strip-components=1 &&
+               sed -i 's|\"glyphs\": \".*\"|\"glyphs\": \"{fontstack}/{range}.pbf\"|' /osm_data/tileserver/styles/osm-bright/style.json &&
+               sed -i 's|\"url\": \".*\"|\"url\": \"mbtiles://openmaptiles\"|' /osm_data/tileserver/styles/osm-bright/style.json;
+             fi &&
+             if [ ! -f \"/osm_data/tileserver/fonts/Noto Sans Regular/0-255.pbf\" ] || [ \$(wc -c < \"/osm_data/tileserver/fonts/Noto Sans Regular/0-255.pbf\") -lt 1000 ]; then
+               echo \"Provisioning fonts...\" &&
+               curl -L https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip -o /tmp/noto-sans.zip &&
+               unzip -o /tmp/noto-sans.zip -d /osm_data/tileserver/fonts/ &&
+               rm /tmp/noto-sans.zip;
+             fi &&
+             node server.js"
+    restart: unless-stopped
+
+volumes:
+  osm_data:
+    name: osm_persistent_data
+  osm_temp:
+    name: osm_build_temp
