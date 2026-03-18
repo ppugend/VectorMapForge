@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  tileserver:
+    image: maptiler/tileserver-gl:latest
+    container_name: osm_tileserver
+    command: -c /data/tileserver/config.json
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./data:/data/data
+      - ./tileserver:/data/tileserver
+    restart: unless-stopped
+
+  manager:
+    image: node:18-alpine
+    container_name: osm_manager
+    working_dir: /osm_manager_code
+    ports:
+      - "8082:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+      - ./tileserver:/tileserver
+      - ./manager:/osm_manager_code
+    environment:
+      - DATA_DIR=/data
+      - TILESERVER_CONFIG=/tileserver/config.json
+      - TILESERVER_CONTAINER=osm_tileserver
+    command: >
+      sh -c "apk add --no-cache docker-cli && 
+             npm install && 
+             node server.js"
+    restart: unless-stopped

@@ -1,0 +1,14 @@
+# Data files
+data/pbf/
+data/mbtiles/
+data/sources/
+data/tmp/
+data/*.json
+
+# Node dependencies
+node_modules/
+npm-debug.log
+
+# System files
+.DS_Store
+.env

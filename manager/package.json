@@ -1,0 +1,12 @@
+{
+  "name": "osm-manager",
+  "version": "1.0.0",
+  "description": "OSM Tile Server Manager",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
