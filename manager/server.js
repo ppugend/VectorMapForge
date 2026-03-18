@@ -172,7 +172,7 @@ app.post('/api/update', async (req, res) => {
       'ghcr.io/onthegomap/planetiler:latest',
       `--osm-path=${pbfPath}`,
       `--output=${tempMbtilesPath}`,
-      `--tmpdir=${TEMP_DIR}`,
+      `--tmpdir=${TEMP_DIR}/work`,
       '--download', '--fetch-wikidata', '--nodemap-type=sparsearray', '--force'
     ], log);
 
