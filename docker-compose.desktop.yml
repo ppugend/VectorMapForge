@@ -1,21 +1,21 @@
 services:
   manager:
-    build: ./manager
+    image: oven/bun:alpine
     container_name: osm_manager
+    working_dir: /app
     ports:
       - "8080:3000"           # public: tiles, viewer
       - "127.0.0.1:8082:3001" # admin:  dashboard (localhost only)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./manager:/app
-      - manager_modules:/app/node_modules
       - osm_data:/osm_data
       - osm_temp:/osm_temp
     environment:
       - DATA_DIR=/osm_data
       - TEMP_DIR=/osm_temp
       - PLANETILER_JVM_MEMORY=${PLANETILER_JVM_MEMORY:-6g}
-    command: bun server.js
+    command: sh -c "apk add --no-cache docker-cli curl tar unzip && bun install && bun server.js"
     restart: unless-stopped
 
 volumes:
