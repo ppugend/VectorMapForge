@@ -110,14 +110,12 @@ app.post('/api/check-updates', async (req, res) => {
     try {
       console.log(`Checking updates for ${region.id}...`);
       const remoteMd5Raw = await fetchText(region.url + '.md5');
-      // Geofabrik md5 file format: "md5hash  filename"
       const remoteMd5 = remoteMd5Raw.split(/\s+/)[0];
       
       if (!db.regions[region.id]) db.regions[region.id] = {};
       db.regions[region.id].remoteMd5 = remoteMd5;
       db.regions[region.id].lastCheck = new Date().toISOString();
       
-      // Check local file existence to clear localMd5 if deleted manually
       const pbfPath = `/data/pbf/${region.id}.osm.pbf`;
       if (!fs.existsSync(pbfPath)) {
         db.regions[region.id].localMd5 = null;
@@ -195,6 +193,19 @@ app.post('/api/update', async (req, res) => {
     
     if (!config.data) config.data = {};
     config.data[region.id] = { mbtiles: `${region.id}.mbtiles` };
+    
+    // Also add a pretty style for this region
+    if (!config.styles) config.styles = {};
+    config.styles[`${region.id}-pretty`] = {
+      style: 'osm-bright/style.json',
+      tilejson: {
+        sources: {
+          openmaptiles: {
+            url: `mbtiles://${region.id}`
+          }
+        }
+      }
+    };
     
     fs.writeFileSync(TILESERVER_CONFIG_PATH, JSON.stringify(config, null, 2));
     
