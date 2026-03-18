@@ -82,6 +82,7 @@
 
         <div class="search-row">
             <input type="text" id="searchInput" placeholder="Search by region name or ID..." oninput="onSearch(this.value)">
+            <button class="secondary" onclick="clearSearch()" id="clearSearchBtn" style="display:none;">✕ Clear</button>
             <span id="regionCount" style="color:#666; font-size:13px; white-space:nowrap;"></span>
             <button class="secondary" onclick="refreshGeofabrik()" id="refreshBtn" title="Re-fetch Geofabrik region list">↻ Refresh List</button>
         </div>
@@ -209,7 +210,13 @@
 
         function onSearch(val) {
             currentPage = 1;
+            document.getElementById('clearSearchBtn').style.display = val ? '' : 'none';
             applyFilter(val);
+        }
+
+        function clearSearch() {
+            document.getElementById('searchInput').value = '';
+            onSearch('');
         }
 
         function applyFilter(val) {
