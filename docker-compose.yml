@@ -1,32 +1,59 @@
 services:
   tileserver:
-    image: maptiler/tileserver-gl:latest
+    image: ghcr.io/vinayakkulkarni/tileserver-rs:latest
     container_name: osm_tileserver
-    command: -c /data/tileserver/config.json
+    command: /app/tileserver-rs --config /data/tileserver/config.toml
     ports:
       - "8081:8080"
     volumes:
-      - ./data:/data/data
-      - ./tileserver:/data/tileserver
+      - osm_data:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   manager:
     image: node:18-alpine
     container_name: osm_manager
-    working_dir: /osm_manager_code
+    working_dir: /app
     ports:
       - "8082:3000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./data:/data
-      - ./tileserver:/tileserver
-      - ./manager:/osm_manager_code
+      - ./manager:/app
+      - osm_data:/osm_data
+      - osm_temp:/osm_temp
     environment:
-      - DATA_DIR=/data
-      - TILESERVER_CONFIG=/tileserver/config.json
+      - DATA_DIR=/osm_data
+      - TEMP_DIR=/osm_temp
+      - TILESERVER_CONFIG=/osm_data/tileserver/config.toml
       - TILESERVER_CONTAINER=osm_tileserver
+    # 이 command는 컨테이너 시작 시 소스코드와 환경을 자동으로 생성합니다.
     command: >
-      sh -c "apk add --no-cache docker-cli && 
-             npm install && 
+      sh -c "apk add --no-cache docker-cli curl tar &&
+             npm install &&
+             # Provision fonts and styles if missing in volume
+             if [ ! -d \"/osm_data/tileserver/styles/osm-bright\" ]; then
+               echo \"Provisioning styles...\" &&
+               mkdir -p /osm_data/tileserver/styles/osm-bright &&
+               curl -L https://github.com/openmaptiles/osm-bright-gl-style/archive/refs/heads/master.tar.gz | tar -xz -C /osm_data/tileserver/styles/osm-bright --strip-components=1 &&
+               sed -i 's|\"glyphs\": \".*\"|\"glyphs\": \"{fontstack}/{range}.pbf\"|' /osm_data/tileserver/styles/osm-bright/style.json &&
+               sed -i 's|\"url\": \".*\"|\"url\": \"mbtiles://openmaptiles\"|' /osm_data/tileserver/styles/osm-bright/style.json;
+             fi &&
+             if [ ! -d \"/osm_data/tileserver/fonts/Noto Sans Regular\" ]; then
+               echo \"Provisioning fonts...\" &&
+               mkdir -p \"/osm_data/tileserver/fonts/Noto Sans Regular\" \"/osm_data/tileserver/fonts/Noto Sans Bold\" \"/osm_data/tileserver/fonts/Noto Sans Italic\" &&
+               curl -L https://github.com/openmaptiles/fonts/raw/gh-pages/noto-sans/0-255.pbf -o \"/osm_data/tileserver/fonts/Noto Sans Regular/0-255.pbf\" &&
+               curl -L https://github.com/openmaptiles/fonts/raw/gh-pages/noto-sans-bold/0-255.pbf -o \"/osm_data/tileserver/fonts/Noto Sans Bold/0-255.pbf\" &&
+               curl -L https://github.com/openmaptiles/fonts/raw/gh-pages/noto-sans-italic/0-255.pbf -o \"/osm_data/tileserver/fonts/Noto Sans Italic/0-255.pbf\";
+             fi &&
              node server.js"
     restart: unless-stopped
+
+volumes:
+  osm_data:
+    name: osm_persistent_data
+  osm_temp:
+    name: osm_build_temp
