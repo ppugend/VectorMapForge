@@ -3,30 +3,56 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <title>OSM Vector Tile Manager</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f5f5f5; color: #333; }
-        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f5f5f5; color: #333; margin-bottom: 300px; }
+        .container { max-width: 1100px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         h1 { margin: 0; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th, td { text-align: left; padding: 12px; border-bottom: 1px solid #eee; }
-        th { background: #fafafa; }
-        button { background: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        th { background: #fafafa; position: sticky; top: 0; }
+        button { background: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; }
         button:hover { background: #0056b3; }
         button:disabled { background: #ccc; cursor: not-allowed; }
         button.secondary { background: #6c757d; }
+        button.danger { background: #dc3545; }
+        button.danger:hover { background: #a71d2a; }
+        button.export { background: #28a745; }
+        button.cancel { background: #ffc107; color: #333; }
         .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; white-space: nowrap; }
         .status-up-to-date { background: #d4edda; color: #155724; }
         .status-update-available { background: #fff3cd; color: #856404; }
         .status-not-downloaded { background: #f8d7da; color: #721c24; }
-        .status-box { margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 4px; background: #fafafa; display: none; }
-        pre { background: #222; color: #0f0; padding: 10px; overflow-x: auto; border-radius: 4px; font-size: 12px; max-height: 300px; overflow-y: auto; }
-        .active { display: block; }
-        .links { margin-bottom: 20px; font-size: 14px; padding: 10px; background: #eef; border-radius: 4px; }
-        .links a { margin-right: 15px; color: #007bff; text-decoration: none; font-weight: bold; }
-        .links a:hover { text-decoration: underline; }
+        
+        /* Fixed Footer Status Bar */
+        .status-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #222; color: #eee; padding: 15px 25px; box-shadow: 0 -4px 10px rgba(0,0,0,0.3); z-index: 1000; display: none; }
+        .status-bar.active { display: block; }
+        .status-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .status-info { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+        .spinner { border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; border-top: 3px solid #fff; width: 18px; height: 18px; animation: spin 1s linear infinite; flex-shrink: 0; }
+        .spinner.done { border-top: 3px solid #4caf50; animation: none; }
+        .spinner.error { border-top: 3px solid #f44336; animation: none; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        pre#taskLogs { background: #000; color: #0f0; padding: 10px; font-size: 12px; height: 200px; overflow-y: auto; border-radius: 4px; margin: 0; white-space: pre-wrap; word-break: break-all; }
+        .status-bar.collapsed pre#taskLogs { display: none; }
+        #toggleLogsBtn { background: none; border: 1px solid #555; color: #aaa; padding: 3px 8px; font-size: 11px; border-radius: 3px; cursor: pointer; margin-left: 8px; }
+        #toggleLogsBtn:hover { background: #333; color: #fff; }
+        #taskElapsed { color: #aaa; font-size: 12px; }
+        
+        .links { margin-bottom: 20px; font-size: 14px; padding: 15px; background: #eef; border-radius: 4px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .import-section { border: 1px dashed #ccc; padding: 10px; border-radius: 4px; background: #fff; display: flex; align-items: center; gap: 10px; }
         .map-link { color: #28a745 !important; font-weight: bold; }
+
+        /* Toast */
+        #toastContainer { position: fixed; top: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
+        .toast { background: #333; color: #fff; padding: 12px 16px; border-radius: 6px; font-size: 13px; max-width: 320px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); opacity: 0; transform: translateX(20px); transition: opacity 0.3s, transform 0.3s; pointer-events: none; }
+        .toast.show { opacity: 1; transform: translateX(0); }
+        .toast.toast-success { border-left: 4px solid #4caf50; }
+        .toast.toast-warn { border-left: 4px solid #ff9800; }
+        .toast.toast-error { border-left: 4px solid #f44336; }
+        .toast.toast-info { border-left: 4px solid #2196f3; }
     </style>
 </head>
 <body>
@@ -37,7 +63,12 @@
         </div>
         
         <div class="links">
-            <a href="http://localhost:8081" target="_blank">🔍 TileServer Dashboard</a>
+            <div class="import-section">
+                <strong>Import ZIP:</strong>
+                <input type="file" id="importFile" accept=".zip">
+                <button onclick="importZip()">Upload & Import</button>
+            </div>
+            <button class="export" onclick="exportSelected()" id="exportBtn">Export Selected (.zip)</button>
             <span style="color: #666">| Pretty Maps:</span>
             <span id="mapLinks">No maps ready</span>
         </div>
@@ -45,6 +76,7 @@
         <table>
             <thead>
                 <tr>
+                    <th><input type="checkbox" onclick="toggleAll(this)"></th>
                     <th>Region</th>
                     <th>Local Status</th>
                     <th>Latest Check</th>
@@ -52,41 +84,110 @@
                 </tr>
             </thead>
             <tbody id="regionsBody">
-                <tr><td colspan="4">Loading regions...</td></tr>
+                <tr><td colspan="5">Loading regions...</td></tr>
             </tbody>
         </table>
+    </div>
 
-        <div id="statusBox" class="status-box">
-            <h3 id="taskTitle">Task Status</h3>
-            <p>Status: <strong id="taskState">Waiting...</strong></p>
-            <pre id="taskLogs"></pre>
+    <div id="toastContainer"></div>
+
+    <!-- Fixed Status Bar -->
+    <div id="statusBar" class="status-bar">
+        <div class="status-header">
+            <div class="status-info">
+                <div class="spinner" id="statusSpinner"></div>
+                <span><strong id="taskTitle">Task</strong>: <span id="taskState">Processing...</span></span>
+                <span id="taskElapsed"></span>
+                <button id="toggleLogsBtn" onclick="toggleLogs()">▲ 로그 숨기기</button>
+            </div>
+            <button class="cancel" id="cancelBtn" onclick="cancelTask()">⛔ 작업 취소</button>
+            <button id="closeBarBtn" onclick="hideStatus()" style="background:#555;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:14px;margin-left:6px;">✕</button>
         </div>
+        <pre id="taskLogs"></pre>
     </div>
 
     <script>
-        function formatDate(iso) {
-            if (!iso) return '-';
-            return new Date(iso).toLocaleString();
+        function formatDate(iso) { if (!iso) return '-'; return new Date(iso).toLocaleString(); }
+        function ts() { return new Date().toLocaleTimeString(); }
+
+        // ── 로그 토글 ──────────────────────────────────────────
+        let logsCollapsed = false;
+        function toggleLogs() {
+            logsCollapsed = !logsCollapsed;
+            document.getElementById('statusBar').classList.toggle('collapsed', logsCollapsed);
+            document.getElementById('toggleLogsBtn').textContent = logsCollapsed ? '▼ 로그 보기' : '▲ 로그 숨기기';
+        }
+        function toggleAll(source) { document.querySelectorAll('input[name="regionSelect"]').forEach(c => c.checked = source.checked); }
+
+        // ── 토스트 ─────────────────────────────────────────────
+        function showToast(html, type = 'info', duration = 5000) {
+            const el = document.createElement('div');
+            el.className = `toast toast-${type}`;
+            el.innerHTML = html;
+            document.getElementById('toastContainer').appendChild(el);
+            requestAnimationFrame(() => { requestAnimationFrame(() => el.classList.add('show')); });
+            setTimeout(() => {
+                el.classList.remove('show');
+                setTimeout(() => el.remove(), 400);
+            }, duration);
         }
 
+        // ── 상태바 공통 ────────────────────────────────────────
+        let pollTimer = null;
+        let taskStartTime = null;
+        let elapsedTimer = null;
+        let localTaskActive = false; // export/import 중엔 pollStatus가 상태바 덮지 않음
+
+        function showStatus(title, state) {
+            localTaskActive = true;
+            document.getElementById('statusBar').classList.add('active');
+            document.getElementById('taskTitle').innerText = title;
+            document.getElementById('taskState').innerText = state;
+            document.getElementById('taskLogs').innerText = '';
+            document.getElementById('cancelBtn').style.display = 'none';
+            document.getElementById('statusSpinner').className = 'spinner';
+            if (!taskStartTime) {
+                taskStartTime = Date.now();
+                elapsedTimer = setInterval(updateElapsed, 1000);
+            }
+        }
+        function hideStatus() {
+            localTaskActive = false;
+            document.getElementById('statusBar').classList.remove('active');
+            clearInterval(elapsedTimer); elapsedTimer = null;
+            taskStartTime = null;
+            document.getElementById('taskElapsed').innerText = '';
+        }
+        function updateElapsed() {
+            if (!taskStartTime) return;
+            const sec = Math.floor((Date.now() - taskStartTime) / 1000);
+            const m = Math.floor(sec / 60), s = sec % 60;
+            document.getElementById('taskElapsed').innerText = `경과: ${m}분 ${s}초`;
+        }
+        function localLog(msg) {
+            const el = document.getElementById('taskLogs');
+            el.innerText += `[${ts()}] ${msg}\n`;
+            el.scrollTop = el.scrollHeight;
+        }
+        function localFinalize(success) {
+            const spinner = document.getElementById('statusSpinner');
+            spinner.className = 'spinner ' + (success ? 'done' : 'error');
+            clearInterval(elapsedTimer); elapsedTimer = null;
+        }
+
+        // ── 리전 목록 ──────────────────────────────────────────
         async function fetchRegions() {
-            const res = await fetch('/api/regions');
+            const res = await fetch('/api/regions', { cache: 'no-store' });
             const regions = await res.json();
             const body = document.getElementById('regionsBody');
             const mapLinks = document.getElementById('mapLinks');
             body.innerHTML = '';
-            
             let readyMaps = [];
 
             regions.forEach(r => {
                 const s = r.status;
-                let statusHtml = '';
-                let btnText = 'Download / Build';
-
-                if (s.localMd5) {
-                    readyMaps.push(`<a class="map-link" href="http://localhost:8081/styles/${r.id}-pretty/" target="_blank">🗺️ ${r.name}</a>`);
-                }
-
+                let statusHtml = '', btnText = 'Download / Build';
+                if (s.localMd5) readyMaps.push(`<a class="map-link" href="/viewer.html?region=${r.id}" target="_blank">🗺️ ${r.name}</a>`);
                 if (!s.localMd5) {
                     statusHtml = '<span class="status-badge status-not-downloaded">Not Downloaded</span>';
                 } else if (s.localMd5 !== s.remoteMd5 && s.remoteMd5) {
@@ -96,74 +197,178 @@
                     statusHtml = '<span class="status-badge status-up-to-date">Up to Date</span>';
                     btnText = 'Rebuild';
                 }
-
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
+                    <td><input type="checkbox" name="regionSelect" value="${r.id}" ${!s.localMd5 ? 'disabled' : ''}></td>
                     <td><strong>${r.name}</strong><br><small>${r.id}</small></td>
                     <td>${statusHtml}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
                     <td>${formatDate(s.lastCheck)}<br><small>${s.remoteMd5 ? s.remoteMd5.substring(0,8) : '-'}</small></td>
                     <td>
-                        <button onclick="updateRegion('${r.id}')">${btnText}</button>
-                    </td>
-                `;
+                        <button onclick="updateRegion('${r.id}', '${btnText}')">${btnText}</button>
+                        ${s.localMd5 ? `<button class="danger" onclick="removeRegion('${r.id}')">Remove</button>` : ''}
+                    </td>`;
                 body.appendChild(tr);
             });
-
             mapLinks.innerHTML = readyMaps.length > 0 ? readyMaps.join(' ') : 'No maps ready';
         }
 
+        // ── Check Updates → 토스트 ─────────────────────────────
         async function checkUpdates() {
             const btn = document.getElementById('checkBtn');
-            btn.disabled = true;
-            btn.innerText = 'Checking...';
+            btn.disabled = true; btn.innerText = 'Checking...';
             try {
-                await fetch('/api/check-updates', { method: 'POST' });
-                setTimeout(fetchRegions, 2000);
+                const res = await fetch('/api/check-updates', { method: 'POST' });
+                const data = await res.json();
+                fetchRegions();
+                const updates = data.results.filter(r => r.hasUpdate);
+                const errors  = data.results.filter(r => r.error);
+                if (updates.length) {
+                    showToast(`<strong>업데이트 있음</strong><br>${updates.map(r => r.name).join(', ')}`, 'warn', 7000);
+                } else if (errors.length) {
+                    showToast(`일부 리전 확인 실패: ${errors.map(r => r.name).join(', ')}`, 'error', 6000);
+                } else {
+                    showToast('모든 리전이 최신 버전입니다.', 'success', 4000);
+                }
             } catch (err) {
-                alert('Error: ' + err.message);
+                showToast('업데이트 확인 실패: ' + err.message, 'error');
             } finally {
-                btn.disabled = false;
-                btn.innerText = 'Check Geofabrik Updates';
+                btn.disabled = false; btn.innerText = 'Check Geofabrik Updates';
             }
         }
 
-        async function updateRegion(regionId) {
-            if (!confirm('Start download and build? (May take several minutes)')) return;
+        // ── 빌드 ───────────────────────────────────────────────
+        async function updateRegion(id, action) {
+            if (!confirm(`Confirm ${action} for ${id}?`)) return;
             try {
-                const res = await fetch('/api/update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ regionId })
-                });
+                const res = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionId: id }) });
                 if (!res.ok) throw new Error((await res.json()).error);
                 pollStatus();
-            } catch (err) {
-                alert('Error: ' + err.message);
+            } catch (err) { alert(err.message); }
+        }
+
+        async function removeRegion(id) {
+            if (!confirm(`Permanently remove data for ${id}?`)) return;
+            try {
+                const res = await fetch('/api/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionId: id }) });
+                if (!res.ok) throw new Error((await res.json()).error);
+                fetchRegions();
+            } catch (err) { alert(err.message); }
+        }
+
+        async function cancelTask() {
+            if (!confirm('Cancel current task?')) return;
+            await fetch('/api/cancel', { method: 'POST' });
+        }
+
+        // ── Export → 로그 ──────────────────────────────────────
+        async function exportSelected() {
+            const selected = Array.from(document.querySelectorAll('input[name="regionSelect"]:checked')).map(c => c.value);
+            if (!selected.length) return alert('Select a downloaded region.');
+            showStatus('Export · ZIP 내보내기', '준비 중...');
+            const btn = document.getElementById('exportBtn'); btn.disabled = true;
+            try {
+                localLog(`선택 리전: ${selected.join(', ')}`);
+                localLog('서버에서 ZIP 생성 요청 중...');
+                document.getElementById('taskState').innerText = 'ZIP 생성 중...';
+                const res = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionIds: selected }) });
+                if (!res.ok) throw new Error('서버 오류: ' + res.status);
+                localLog('ZIP 생성 완료, 다운로드 시작...');
+                document.getElementById('taskState').innerText = '다운로드 중...';
+                const disposition = res.headers.get('Content-Disposition') || '';
+                const filename = (disposition.match(/filename="([^"]+)"/) || [])[1] || 'osm-export.zip';
+                const blob = await res.blob();
+                const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+                localLog(`파일 크기: ${sizeMB} MB`);
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+                localLog(`${filename} 다운로드 완료.`);
+                document.getElementById('taskState').innerText = '완료';
+                localFinalize(true);
+            } catch (e) {
+                localLog('오류: ' + e.message);
+                document.getElementById('taskState').innerText = '오류';
+                localFinalize(false);
+            } finally {
+                btn.disabled = false;
+                localTaskActive = false;
             }
+        }
+
+        // ── Import → 로그 ──────────────────────────────────────
+        async function importZip() {
+            const fileInput = document.getElementById('importFile');
+            if (!fileInput.files.length) return alert('Select a .zip file.');
+            const file = fileInput.files[0];
+            showStatus('Import · ZIP 가져오기', '업로드 중...');
+            try {
+                localLog(`파일: ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`);
+                localLog('서버로 업로드 중...');
+                const formData = new FormData(); formData.append('file', file);
+                const res = await fetch('/api/import', { method: 'POST', body: formData });
+                localLog('업로드 완료. 압축 해제 및 적용 중...');
+                document.getElementById('taskState').innerText = '적용 중...';
+                if (!res.ok) throw new Error((await res.json()).error || 'Import 실패');
+                localLog('데이터베이스 업데이트 완료.');
+                localLog('타일서버 재로드 완료.');
+                document.getElementById('taskState').innerText = '완료';
+                localFinalize(true);
+                fetchRegions();
+            } catch (e) {
+                localLog('오류: ' + e.message);
+                document.getElementById('taskState').innerText = '오류';
+                localFinalize(false);
+            } finally {
+                localTaskActive = false;
+            }
+        }
+
+        // ── 빌드 상태 폴링 ─────────────────────────────────────
+        function isTerminalStatus(status) {
+            return status === 'Completed' || status === 'Error' || status === 'Cancelled';
         }
 
         async function pollStatus() {
-            const res = await fetch('/api/status');
-            const data = await res.json();
-            const box = document.getElementById('statusBox');
-            
-            if (data.task) {
-                box.classList.add('active');
-                document.getElementById('taskTitle').innerText = 'Processing: ' + data.task.region;
-                document.getElementById('taskState').innerText = data.task.status;
-                const logsEl = document.getElementById('taskLogs');
-                logsEl.innerText = data.task.logs || '';
-                logsEl.scrollTop = logsEl.scrollHeight;
-                
-                if (data.task.status !== 'Completed' && data.task.status !== 'Error') {
-                    setTimeout(pollStatus, 2000);
+            clearTimeout(pollTimer);
+            if (localTaskActive) { pollTimer = setTimeout(pollStatus, 2000); return; }
+            try {
+                const res = await fetch('/api/status', { cache: 'no-store' });
+                if (!res.ok) throw new Error('status fetch failed');
+                const data = await res.json();
+                const bar = document.getElementById('statusBar');
+                if (data.task) {
+                    bar.classList.add('active');
+                    document.getElementById('taskTitle').innerText = data.task.title || data.task.region || 'Task';
+                    document.getElementById('taskState').innerText = data.task.status || '';
+                    document.getElementById('cancelBtn').style.display = isTerminalStatus(data.task.status) ? 'none' : 'inline-block';
+
+                    if (!taskStartTime) {
+                        taskStartTime = Date.now();
+                        if (!elapsedTimer) elapsedTimer = setInterval(updateElapsed, 1000);
+                    }
+
+                    const spinner = document.getElementById('statusSpinner');
+                    spinner.className = 'spinner';
+                    if (data.task.status === 'Completed') spinner.classList.add('done');
+                    else if (data.task.status === 'Error' || data.task.status === 'Cancelled') spinner.classList.add('error');
+
+                    const logsEl = document.getElementById('taskLogs');
+                    const wasAtBottom = logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight < 40;
+                    logsEl.innerText = data.task.logs || '';
+                    if (wasAtBottom) logsEl.scrollTop = logsEl.scrollHeight;
+
+                    if (!isTerminalStatus(data.task.status)) {
+                        pollTimer = setTimeout(pollStatus, 1500);
+                    } else {
+                        fetchRegions();
+                        clearInterval(elapsedTimer); elapsedTimer = null;
+                    }
                 } else {
-                    fetchRegions();
-                    setTimeout(() => box.classList.remove('active'), 10000);
+                    bar.classList.remove('active');
+                    taskStartTime = null;
+                    clearInterval(elapsedTimer); elapsedTimer = null;
                 }
-            } else {
-                box.classList.remove('active');
-                fetchRegions();
+            } catch (e) {
+                pollTimer = setTimeout(pollStatus, 3000);
             }
         }
 

@@ -32,7 +32,7 @@ services:
       - TILESERVER_CONTAINER=osm_tileserver
     # 이 command는 컨테이너 시작 시 소스코드와 환경을 자동으로 생성합니다.
     command: >
-      sh -c "apk add --no-cache docker-cli curl tar &&
+      sh -c "apk add --no-cache docker-cli curl tar unzip &&
              npm install &&
              # Provision fonts and styles if missing in volume
              if [ ! -d \"/osm_data/tileserver/styles/osm-bright\" ]; then
@@ -42,12 +42,11 @@ services:
                sed -i 's|\"glyphs\": \".*\"|\"glyphs\": \"{fontstack}/{range}.pbf\"|' /osm_data/tileserver/styles/osm-bright/style.json &&
                sed -i 's|\"url\": \".*\"|\"url\": \"mbtiles://openmaptiles\"|' /osm_data/tileserver/styles/osm-bright/style.json;
              fi &&
-             if [ ! -d \"/osm_data/tileserver/fonts/Noto Sans Regular\" ]; then
+             if [ ! -f \"/osm_data/tileserver/fonts/Noto Sans Regular/0-255.pbf\" ] || [ \$(wc -c < \"/osm_data/tileserver/fonts/Noto Sans Regular/0-255.pbf\") -lt 1000 ]; then
                echo \"Provisioning fonts...\" &&
-               mkdir -p \"/osm_data/tileserver/fonts/Noto Sans Regular\" \"/osm_data/tileserver/fonts/Noto Sans Bold\" \"/osm_data/tileserver/fonts/Noto Sans Italic\" &&
-               curl -L https://github.com/openmaptiles/fonts/raw/gh-pages/noto-sans/0-255.pbf -o \"/osm_data/tileserver/fonts/Noto Sans Regular/0-255.pbf\" &&
-               curl -L https://github.com/openmaptiles/fonts/raw/gh-pages/noto-sans-bold/0-255.pbf -o \"/osm_data/tileserver/fonts/Noto Sans Bold/0-255.pbf\" &&
-               curl -L https://github.com/openmaptiles/fonts/raw/gh-pages/noto-sans-italic/0-255.pbf -o \"/osm_data/tileserver/fonts/Noto Sans Italic/0-255.pbf\";
+               curl -L https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip -o /tmp/noto-sans.zip &&
+               unzip -o /tmp/noto-sans.zip -d /osm_data/tileserver/fonts/ &&
+               rm /tmp/noto-sans.zip;
              fi &&
              node server.js"
     restart: unless-stopped
