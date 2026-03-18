@@ -69,7 +69,7 @@ function generateRegionStyle(regionId) {
     const style = JSON.parse(fs.readFileSync(baseStylePath, 'utf8'));
     // Rename "openmaptiles" source to this region's id
     if (style.sources && style.sources.openmaptiles) {
-      style.sources[regionId] = { ...style.sources.openmaptiles, url: `mbtiles://${regionId}` };
+      style.sources[regionId] = { ...style.sources.openmaptiles, url: `http://localhost:8081/data/${regionId}.json` };
       delete style.sources.openmaptiles;
     }
     // Update all layer source references
@@ -78,6 +78,8 @@ function generateRegionStyle(regionId) {
         l.source === 'openmaptiles' ? { ...l, source: regionId } : l
       );
     }
+    // Use manager-served sprites so tileserver-rs built-in viewer also works
+    if (style.sprite) style.sprite = 'http://localhost:8082/sprites/sprite';
     fs.mkdirSync(regionStyleDir, { recursive: true });
     fs.writeFileSync(regionStylePath, JSON.stringify(style, null, 2));
   } catch (e) {
