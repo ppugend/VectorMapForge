@@ -337,7 +337,7 @@ app.post('/api/update', async (req, res) => {
     await runCommand('docker', [
       'run', '--rm', '--volumes-from', 'osm_manager', 'ghcr.io/onthegomap/planetiler:latest',
       `--osm-path=${pbfPath}`, `--output=${tempMbtilesPath}`, `--tmpdir=${TEMP_DIR}/work`,
-      '--download', '--fetch-wikidata', '--nodemap-type=sparsearray', '--force'
+      '--download', '--nodemap-type=sparsearray', '--force'
     ], log);
 
     if (currentTask.aborted) throw new Error('Aborted');
