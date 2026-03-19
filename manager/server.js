@@ -218,28 +218,10 @@ function getPublicOrigin(req) {
 const publicApp = express();
 publicApp.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); next(); });
 
-publicApp.get('/', (req, res) => res.redirect('/tiles.html'));
 publicApp.get('/favicon.ico', (req, res) => res.redirect('/favicon.svg'));
 publicApp.get('/favicon.svg', (req, res) => res.sendFile(path.join(__dirname, 'public/favicon.svg')));
-publicApp.get('/tiles.html', (req, res) => res.sendFile(path.join(__dirname, 'public/tiles.html')));
 publicApp.get('/viewer.html', (req, res) => res.sendFile(path.join(__dirname, 'public/viewer.html')));
 publicApp.use('/sprites', express.static(path.join(__dirname, 'public/sprites')));
-
-// Served tiles list (public — no admin needed)
-publicApp.get('/api/tiles', (req, res) => {
-  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
-  const files = fs.existsSync(mbtilesDir) ? fs.readdirSync(mbtilesDir).filter(f => f.endsWith('.mbtiles')) : [];
-  const tiles = files.map(f => {
-    const id = f.replace('.mbtiles', '');
-    const p = path.join(mbtilesDir, f);
-    const size = fs.statSync(p).size;
-    const region = geofabrikRegions.find(r => r.id === id);
-    const status = db.regions[id] || {};
-    return { id, name: region ? region.name : id, size, lastUpdate: status.lastUpdate || null };
-  });
-  tiles.sort((a, b) => a.name.localeCompare(b.name));
-  res.json(tiles);
-});
 
 // TileJSON
 publicApp.get('/data/:id.json', (req, res) => {
@@ -321,6 +303,21 @@ adminApp.use(express.static(path.join(__dirname, 'public')));
 adminApp.use('/api', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   next();
+});
+
+adminApp.get('/api/tiles', (req, res) => {
+  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
+  const files = fs.existsSync(mbtilesDir) ? fs.readdirSync(mbtilesDir).filter(f => f.endsWith('.mbtiles')) : [];
+  const tiles = files.map(f => {
+    const id = f.replace('.mbtiles', '');
+    const p = path.join(mbtilesDir, f);
+    const size = fs.statSync(p).size;
+    const region = geofabrikRegions.find(r => r.id === id);
+    const status = db.regions[id] || {};
+    return { id, name: region ? region.name : id, size, lastUpdate: status.lastUpdate || null };
+  });
+  tiles.sort((a, b) => a.name.localeCompare(b.name));
+  res.json(tiles);
 });
 
 adminApp.get('/api/config', (req, res) => {
