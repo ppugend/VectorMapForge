@@ -256,6 +256,15 @@ L.maplibreGL({
 
 ---
 
+## Support This Project
+
+If you found this project helpful, consider supporting its maintenance and future development with a small donation.
+You can buy me a coffee via the Ko-fi link below — thank you! ☕✨
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/B0B21CR05U)
+
+---
+
 ## License
 
 MIT © [ppugend](https://github.com/ppugend)
