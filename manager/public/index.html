@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-    <title>OSM Vector Tile Manager</title>
+    <title>VectorMapForge — Forge</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f5f5f5; color: #333; margin-bottom: 300px; }
         .container { max-width: 1100px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -27,8 +27,8 @@
         .status-up-to-date { background: #d4edda; color: #155724; }
         .status-update-available { background: #fff3cd; color: #856404; }
         .status-not-downloaded { background: #f8d7da; color: #721c24; }
-        
-        /* Fixed Footer Status Bar */
+
+        /* Fixed footer status bar */
         .status-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #222; color: #eee; padding: 15px 25px; box-shadow: 0 -4px 10px rgba(0,0,0,0.3); z-index: 1000; display: none; }
         .status-bar.active { display: block; }
         .status-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -42,15 +42,23 @@
         #toggleLogsBtn { background: none; border: 1px solid #555; color: #aaa; padding: 3px 8px; font-size: 11px; border-radius: 3px; cursor: pointer; margin-left: 8px; }
         #toggleLogsBtn:hover { background: #333; color: #fff; }
         #taskElapsed { color: #aaa; font-size: 12px; }
-        
+
         .links { margin-bottom: 20px; font-size: 14px; padding: 15px; background: #eef; border-radius: 4px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
         .search-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
         .search-row input { flex: 1; min-width: 200px; padding: 7px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+        .source-select { padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; background: white; cursor: pointer; }
+        .custom-mirror-input { padding: 7px 10px; border: 1px solid #f0ad4e; border-radius: 4px; font-size: 13px; width: 280px; }
         .pagination { display: flex; gap: 8px; align-items: center; margin-top: 15px; justify-content: center; flex-wrap: wrap; }
         .pagination button { padding: 5px 14px; font-size: 13px; }
         .pagination span { font-size: 13px; color: #555; }
         .import-section { border: 1px dashed #ccc; padding: 10px; border-radius: 4px; background: #fff; display: flex; align-items: center; gap: 10px; }
         .map-link { color: #28a745 !important; font-weight: bold; }
+        .url-guide { background:#f8f9fa; border:1px solid #dee2e6; border-radius:4px; padding:10px 14px; margin-bottom:10px; font-size:13px; }
+        .url-guide code { background:#e9ecef; padding:2px 6px; border-radius:3px; font-size:12px; }
+        .map-card { background:#e8f5e9; border:1px solid #c8e6c9; border-radius:6px; padding:8px 12px; font-size:13px; display:flex; flex-direction:column; gap:3px; min-width:160px; }
+        .map-card a { color:#2e7d32; font-weight:bold; text-decoration:none; }
+        .map-card a:hover { text-decoration:underline; }
+        .map-card small { color:#555; font-size:11px; }
 
         /* Toast */
         #toastContainer { position: fixed; top: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
@@ -65,31 +73,67 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>OSM Vector Tile Manager</h1>
-            <button class="secondary" id="checkBtn" onclick="checkUpdates()">Check Geofabrik Updates</button>
+            <h1>VectorMapForge <span style="font-weight:400;color:#666;font-size:0.7em">— Forge</span></h1>
+            <div style="display:flex;gap:8px;align-items:center">
+                <a class="secondary" href="/tiles.html" target="_blank" style="text-decoration:none;padding:6px 14px;border-radius:4px;font-size:13px;font-weight:600;background:#f1f3f4;color:#555;border:1px solid #ddd;cursor:pointer">🗺 Server</a>
+                <button class="secondary" id="checkBtn" onclick="checkUpdates()">Check Updates</button>
+            </div>
         </div>
-        
+
         <div class="links">
             <div class="import-section">
                 <strong>Import ZIP:</strong>
                 <input type="file" id="importFile" accept=".zip">
-                <button onclick="importZip()">Upload & Import</button>
+                <button onclick="importZip()">Upload &amp; Import</button>
             </div>
             <button class="export" onclick="exportSelected()" id="exportBtn">Export Selected (.zip)</button>
-            <span style="color: #666">| Pretty Maps:</span>
-            <span id="mapLinks">No maps ready</span>
+            <button class="secondary" id="clearCacheBtn" onclick="clearBuildCache()" style="background:#fff3e0;border:1px solid #ffb74d;color:#e65100" title="Delete lake centerline, water polygons, Natural Earth cache — will re-download on next build">🗑 Clear Build Cache</button>
         </div>
 
         <div class="search-row">
+            <select class="source-select" id="sourceSelect" onchange="onSourceChange(this.value)">
+                <option value="">Loading sources...</option>
+            </select>
+            <select class="source-select" id="mirrorSelect" onchange="onMirrorChange(this.value)" style="min-width:200px;">
+                <option value="official">Official</option>
+            </select>
+            <input type="text" id="customMirrorInput" class="custom-mirror-input" placeholder="https://mirror.example.com/base" style="display:none;" oninput="customMirrorBase=this.value">
             <input type="text" id="searchInput" placeholder="Search by region name or ID..." oninput="onSearch(this.value)">
             <button class="secondary" onclick="clearSearch()" id="clearSearchBtn" style="display:none;">✕ Clear</button>
             <span id="regionCount" style="color:#666; font-size:13px; white-space:nowrap;"></span>
-            <button class="secondary" onclick="refreshGeofabrik()" id="refreshBtn" title="Re-fetch Geofabrik region list">↻ Refresh List</button>
+            <select class="source-select" id="pageSizeSelect" onchange="onPageSizeChange(this.value)" title="Rows per page">
+                <option value="20">20 / page</option>
+                <option value="50">50 / page</option>
+                <option value="100">100 / page</option>
+                <option value="500">500 / page</option>
+                <option value="1000">1000 / page</option>
+            </select>
+            <button class="secondary" onclick="refreshSource()" id="refreshBtn" title="Re-fetch region list">↻ Refresh List</button>
         </div>
+
+        <div class="url-guide">
+            <strong>📖 Viewer URL format:</strong>
+            <code>/viewer.html?region=<em>region-id</em>&amp;lat=<em>lat</em>&amp;lng=<em>lng</em>&amp;zoom=<em>zoom</em></code>
+            &nbsp;—&nbsp;
+            <span style="color:#555">lat/lng/zoom optional — defaults to tile's built-in center. Roads visible at zoom: <strong>14–16</strong></span>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:8px; font-size:12px;">
+                <span style="color:#888">Example (Geofabrik):</span>
+                <a href="/viewer.html?region=monaco&lat=43.7384&lng=7.4244&zoom=15" target="_blank" style="color:#007bff">/viewer.html?region=monaco&amp;lat=43.7384&amp;lng=7.4244&amp;zoom=15</a>
+                <span style="color:#bbb">|</span>
+                <span style="color:#888">Example (BBBike):</span>
+                <a href="/viewer.html?region=seoul&lat=37.504381&lng=127.051370&zoom=15" target="_blank" style="color:#007bff">/viewer.html?region=seoul&amp;lat=37.504381&amp;lng=127.051370&amp;zoom=15</a>
+            </div>
+        </div>
+
+        <details id="mapsAccordion" style="margin-bottom:10px;">
+            <summary id="mapsAccordionSummary" style="cursor:pointer; padding:8px 10px; background:#f0f0f0; border-radius:4px; font-weight:bold; user-select:none;">🗺️ Downloaded Maps (0)</summary>
+            <div id="mapLinks" style="padding:10px; display:flex; flex-wrap:wrap; gap:8px; background:#fafafa; border:1px solid #eee; border-top:none; border-radius:0 0 4px 4px;"></div>
+        </details>
+
         <table>
             <thead>
                 <tr>
-                    <th><input type="checkbox" onclick="toggleAll(this)"></th>
+                    <th><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th>
                     <th>Region</th>
                     <th>Parent</th>
                     <th>Local Status</th>
@@ -106,17 +150,19 @@
 
     <div id="toastContainer"></div>
 
-    <!-- Fixed Status Bar -->
+    <!-- Fixed status bar -->
     <div id="statusBar" class="status-bar">
         <div class="status-header">
             <div class="status-info">
                 <div class="spinner" id="statusSpinner"></div>
                 <span><strong id="taskTitle">Task</strong>: <span id="taskState">Processing...</span></span>
                 <span id="taskElapsed"></span>
-                <button id="toggleLogsBtn" onclick="toggleLogs()">▲ 로그 숨기기</button>
+                <button id="toggleLogsBtn" onclick="toggleLogs()">▲ Hide Logs</button>
             </div>
-            <button class="cancel" id="cancelBtn" onclick="cancelTask()">⛔ 작업 취소</button>
-            <button id="closeBarBtn" onclick="hideStatus()" style="background:#555;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:14px;margin-left:6px;">✕</button>
+            <div style="display:flex;gap:6px;">
+                <button class="cancel" id="cancelBtn" onclick="cancelTask()">⛔ Cancel Task</button>
+                <button id="closeBarBtn" onclick="hideStatus()" style="background:#555;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:14px;">✕</button>
+            </div>
         </div>
         <pre id="taskLogs"></pre>
     </div>
@@ -131,33 +177,32 @@
             return (bytes / 1024).toFixed(0) + ' KB';
         }
 
-        // ── 로그 토글 ──────────────────────────────────────────
+        // ── Log toggle ─────────────────────────────────────────
         let logsCollapsed = false;
         function toggleLogs() {
             logsCollapsed = !logsCollapsed;
             document.getElementById('statusBar').classList.toggle('collapsed', logsCollapsed);
-            document.getElementById('toggleLogsBtn').textContent = logsCollapsed ? '▼ 로그 보기' : '▲ 로그 숨기기';
+            document.getElementById('toggleLogsBtn').textContent = logsCollapsed ? '▼ Show Logs' : '▲ Hide Logs';
         }
-        function toggleAll(source) { document.querySelectorAll('input[name="regionSelect"]').forEach(c => c.checked = source.checked); }
+        function toggleAll(cb) {
+            document.querySelectorAll('input[name="regionSelect"]:not(:disabled)').forEach(c => c.checked = cb.checked);
+        }
 
-        // ── 토스트 ─────────────────────────────────────────────
+        // ── Toast ──────────────────────────────────────────────
         function showToast(html, type = 'info', duration = 5000) {
             const el = document.createElement('div');
             el.className = `toast toast-${type}`;
             el.innerHTML = html;
             document.getElementById('toastContainer').appendChild(el);
             requestAnimationFrame(() => { requestAnimationFrame(() => el.classList.add('show')); });
-            setTimeout(() => {
-                el.classList.remove('show');
-                setTimeout(() => el.remove(), 400);
-            }, duration);
+            setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, duration);
         }
 
-        // ── 상태바 공통 ────────────────────────────────────────
+        // ── Status bar ─────────────────────────────────────────
         let pollTimer = null;
         let taskStartTime = null;
         let elapsedTimer = null;
-        let localTaskActive = false; // export/import 중엔 pollStatus가 상태바 덮지 않음
+        let localTaskActive = false;
 
         function showStatus(title, state) {
             localTaskActive = true;
@@ -167,10 +212,8 @@
             document.getElementById('taskLogs').innerText = '';
             document.getElementById('cancelBtn').style.display = 'none';
             document.getElementById('statusSpinner').className = 'spinner';
-            if (!taskStartTime) {
-                taskStartTime = Date.now();
-                elapsedTimer = setInterval(updateElapsed, 1000);
-            }
+            taskStartTime = Date.now();
+            if (!elapsedTimer) elapsedTimer = setInterval(updateElapsed, 1000);
         }
         function hideStatus() {
             localTaskActive = false;
@@ -182,8 +225,7 @@
         function updateElapsed() {
             if (!taskStartTime) return;
             const sec = Math.floor((Date.now() - taskStartTime) / 1000);
-            const m = Math.floor(sec / 60), s = sec % 60;
-            document.getElementById('taskElapsed').innerText = `경과: ${m}분 ${s}초`;
+            document.getElementById('taskElapsed').innerText = `Elapsed: ${Math.floor(sec/60)}m ${sec%60}s`;
         }
         function localLog(msg) {
             const el = document.getElementById('taskLogs');
@@ -191,20 +233,100 @@
             el.scrollTop = el.scrollHeight;
         }
         function localFinalize(success) {
-            const spinner = document.getElementById('statusSpinner');
-            spinner.className = 'spinner ' + (success ? 'done' : 'error');
+            document.getElementById('statusSpinner').className = 'spinner ' + (success ? 'done' : 'error');
             clearInterval(elapsedTimer); elapsedTimer = null;
         }
 
-        // ── 리전 목록 + 검색 + 페이지네이션 ───────────────────────
+        // ── Source / mirror selection ──────────────────────────
+        let currentSource = 'geofabrik';
+        let currentMirror = 'official';
+        let customMirrorBase = '';
+        let sourcesData = [];
+
+        async function loadSources() {
+            const res = await fetch('/api/sources');
+            sourcesData = await res.json();
+            const sel = document.getElementById('sourceSelect');
+            sel.innerHTML = sourcesData.map(s =>
+                `<option value="${s.id}">${s.name} — ${s.desc}</option>`
+            ).join('');
+            currentSource = sourcesData[0]?.id || 'geofabrik';
+            updateMirrorDropdown(currentSource);
+        }
+
+        function updateMirrorDropdown(sourceId) {
+            const source = sourcesData.find(s => s.id === sourceId);
+            const sel = document.getElementById('mirrorSelect');
+            if (!source?.mirrors?.length) { sel.style.display = 'none'; return; }
+            sel.style.display = '';
+            sel.innerHTML = source.mirrors.map(m =>
+                `<option value="${m.id}">${m.name}</option>`
+            ).join('');
+            currentMirror = source.mirrors[0].id;
+            document.getElementById('customMirrorInput').style.display = 'none';
+        }
+
+        function onSourceChange(val) {
+            currentSource = val;
+            currentPage = 1;
+            document.getElementById('searchInput').value = '';
+            document.getElementById('clearSearchBtn').style.display = 'none';
+            updateMirrorDropdown(val);
+            fetchRegions();
+        }
+
+        function onMirrorChange(val) {
+            currentMirror = val;
+            const input = document.getElementById('customMirrorInput');
+            input.style.display = val === 'custom' ? '' : 'none';
+            if (val === 'custom') input.focus();
+        }
+
+        // ── Region list + search + pagination ──────────────────
         let allRegions = [];
         let filteredRegions = [];
         let currentPage = 1;
-        const PAGE_SIZE = 20;
+        let pageSize = 20;
+        const tileCenters = {}; // regionId → { lat, lng }
+
+        function onPageSizeChange(val) {
+            pageSize = parseInt(val);
+            currentPage = 1;
+            renderTable();
+        }
+
+        async function fetchTileCenters(regions) {
+            const downloaded = regions.filter(r => r.hasMbtiles && !tileCenters[r.id]);
+            await Promise.all(downloaded.map(async r => {
+                try {
+                    const res = await fetch(`/data/${r.id}.json`);
+                    if (!res.ok) return;
+                    const tj = await res.json();
+                    if (tj.center?.length >= 2) {
+                        tileCenters[r.id] = { lng: tj.center[0], lat: tj.center[1] };
+                    }
+                } catch (_) {}
+            }));
+        }
+
+        function viewerHref(regionId, fallbackCenter) {
+            const c = tileCenters[regionId] || (fallbackCenter ? { lng: fallbackCenter[0], lat: fallbackCenter[1] } : null);
+            let href = `/viewer.html?region=${regionId}`;
+            if (c) href += `&lat=${c.lat.toFixed(6)}&lng=${c.lng.toFixed(6)}&zoom=15`;
+            return href;
+        }
+
+        function publicViewerHref(regionId, fallbackCenter) {
+            const c = tileCenters[regionId] || (fallbackCenter ? { lng: fallbackCenter[0], lat: fallbackCenter[1] } : null);
+            let href = `${location.protocol}//${location.hostname}:8050/viewer.html?region=${regionId}`;
+            if (c) href += `&lat=${c.lat.toFixed(6)}&lng=${c.lng.toFixed(6)}&zoom=15`;
+            return href;
+        }
 
         async function fetchRegions() {
-            const res = await fetch('/api/regions', { cache: 'no-store' });
+            const res = await fetch(`/api/regions?source=${currentSource}`, { cache: 'no-store' });
             allRegions = await res.json();
+            await fetchTileCenters(allRegions);
             applyFilter();
         }
 
@@ -229,39 +351,51 @@
         }
 
         function renderTable() {
+            const selectAll = document.getElementById('selectAll');
+            if (selectAll) selectAll.checked = false;
+
             const body = document.getElementById('regionsBody');
             body.innerHTML = '';
             const total = filteredRegions.length;
-            const start = (currentPage - 1) * PAGE_SIZE;
-            const page = filteredRegions.slice(start, start + PAGE_SIZE);
+            const page  = filteredRegions.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
             document.getElementById('regionCount').textContent = `${total.toLocaleString()} regions`;
 
             page.forEach(r => {
                 const s = r.status;
-                let statusHtml = '', btnText = 'Download / Build';
+                let statusHtml, btnText;
                 if (!r.hasMbtiles) {
                     statusHtml = '<span class="status-badge status-not-downloaded">Not Downloaded</span>';
+                    btnText = 'Download / Build';
                 } else if (s.localMd5 !== s.remoteMd5 && s.remoteMd5) {
                     statusHtml = '<span class="status-badge status-update-available">Update Available</span>';
-                    btnText = 'Update';
+                    btnText = 'Download / Update';
                 } else {
                     statusHtml = '<span class="status-badge status-up-to-date">Up to Date</span>';
                     btnText = 'Rebuild';
                 }
+
+                const sizeStr = r.hasMbtiles
+                    ? ` <small style="color:#888">(${r.mbtilesSize ? fmtSize(r.mbtilesSize) : '?'}${r.pbfBytes ? ' · PBF ' + fmtSize(r.pbfBytes) : ''})</small>` : '';
+
+                const viewerLink = r.hasMbtiles
+                    ? `<a class="map-link" href="${viewerHref(r.id, r.center)}" target="_blank">🗺️ View</a><a class="map-link" href="${publicViewerHref(r.id, r.center)}" target="_blank" title="Open on public port (8050)">🌐 Public</a>` : '';
+
+                const escapedName = r.name.replace(/'/g, "\\'");
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td><input type="checkbox" name="regionSelect" value="${r.id}" ${!r.hasMbtiles ? 'disabled' : ''}></td>
                     <td><strong>${r.name}</strong><br><small>${r.id}</small></td>
                     <td><small>${r.parent || '-'}</small></td>
-                    <td>${statusHtml}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
+                    <td>${statusHtml}${sizeStr}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
                     <td>${formatDate(s.lastCheck)}<br><small>${s.remoteMd5 ? s.remoteMd5.substring(0,8) : '-'}</small></td>
                     <td><div class="action-cell">
                         ${buildDisabled
-                            ? `<button disabled title="빌드는 데스크탑에서 진행 후 Import하세요" style="cursor:not-allowed;opacity:0.5;">${btnText}</button>`
-                            : `<button onclick="updateRegion('${r.id}', '${btnText}')">${btnText}</button>`
+                            ? `<button disabled title="Build on desktop, then Import here" style="cursor:not-allowed;opacity:0.5;">${btnText}</button>`
+                            : `<button id="buildBtn-${r.id}" onclick="updateRegion('${r.id}', '${btnText}')">${btnText}</button>`
                         }
-                        ${r.hasMbtiles ? `<button class="danger sm" onclick="removeTiles('${r.id}', '${r.name}')">🗑 Remove (${fmtSize(r.mbtilesSize)})</button>` : ''}
+                        ${r.hasMbtiles ? `<button class="danger sm" onclick="removeTiles('${r.id}', '${escapedName}')">🗑 Remove</button>` : ''}
+                        ${viewerLink}
                     </div></td>`;
                 body.appendChild(tr);
             });
@@ -270,7 +404,7 @@
         }
 
         function renderPagination(total) {
-            const totalPages = Math.ceil(total / PAGE_SIZE);
+            const totalPages = Math.ceil(total / pageSize);
             const el = document.getElementById('pagination');
             if (totalPages <= 1) { el.innerHTML = ''; return; }
             el.innerHTML = `
@@ -278,12 +412,11 @@
                 <button onclick="gotoPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>‹ Prev</button>
                 <span>Page ${currentPage} / ${totalPages}</span>
                 <button onclick="gotoPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''}>Next ›</button>
-                <button onclick="gotoPage(${totalPages})" ${currentPage >= totalPages ? 'disabled' : ''}>»</button>
-            `;
+                <button onclick="gotoPage(${totalPages})" ${currentPage >= totalPages ? 'disabled' : ''}>»</button>`;
         }
 
         function gotoPage(p) {
-            const totalPages = Math.ceil(filteredRegions.length / PAGE_SIZE);
+            const totalPages = Math.ceil(filteredRegions.length / pageSize);
             if (p < 1 || p > totalPages) return;
             currentPage = p;
             renderTable();
@@ -291,63 +424,100 @@
         }
 
         function updateMapLinks() {
-            const readyMaps = allRegions
-                .filter(r => r.status && r.status.localMd5)
-                .map(r => `<a class="map-link" href="/viewer.html?region=${r.id}" target="_blank">🗺️ ${r.name}</a>`);
-            document.getElementById('mapLinks').innerHTML = readyMaps.length > 0 ? readyMaps.join(' ') : 'No maps ready';
+            const downloaded = allRegions.filter(r => r.hasMbtiles);
+            const summary   = document.getElementById('mapsAccordionSummary');
+            const container = document.getElementById('mapLinks');
+
+            summary.textContent = `🗺️ Downloaded Maps (${downloaded.length})`;
+
+            if (downloaded.length === 0) {
+                container.innerHTML = '<span style="color:#888; padding:4px;">No maps downloaded from this source.</span>';
+                return;
+            }
+
+            container.innerHTML = downloaded.map(r => {
+                const c = tileCenters[r.id] || (r.center ? { lng: r.center[0], lat: r.center[1] } : null);
+                const coordStr = c ? `lat=${c.lat.toFixed(6)}, lng=${c.lng.toFixed(6)}, zoom=15` : 'Coords: TileJSON center';
+                const sizes = [r.mbtilesSize ? fmtSize(r.mbtilesSize) : null, r.pbfBytes ? 'PBF ' + fmtSize(r.pbfBytes) : null].filter(Boolean).join(' · ');
+                return `<div class="map-card">
+                    <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+                        <a href="${viewerHref(r.id, r.center)}" target="_blank">🗺️ ${r.name}</a>
+                        <a href="${publicViewerHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888" title="Open on public port (8050)">🌐 Public URL</a>
+                    </div>
+                    <small>${r.id}${sizes ? ' · ' + sizes : ''}</small>
+                    <small style="color:#777">${coordStr}</small>
+                </div>`;
+            }).join('');
         }
 
-        async function refreshGeofabrik() {
+        async function refreshSource() {
             const btn = document.getElementById('refreshBtn');
             btn.disabled = true; btn.textContent = '↻ Fetching...';
+            showStatus('Refresh · Region List', 'Fetching from source...');
             try {
-                const res = await fetch('/api/refresh-geofabrik', { method: 'POST' });
+                localLog(`Source: ${currentSource}`);
+                const res = await fetch('/api/refresh-source', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: currentSource }) });
                 const data = await res.json();
-                showToast(`Geofabrik 목록 갱신 완료 (${data.count}개 리전)`, 'success', 4000);
+                if (!res.ok) throw new Error(data.error || 'Refresh failed');
+                localLog(`Done: ${data.count} regions`);
+                document.getElementById('taskState').innerText = `Done (${data.count})`;
+                localFinalize(true);
                 fetchRegions();
             } catch(e) {
-                showToast('목록 갱신 실패: ' + e.message, 'error');
+                localLog('Error: ' + e.message);
+                document.getElementById('taskState').innerText = 'Error';
+                localFinalize(false);
             } finally {
                 btn.disabled = false; btn.textContent = '↻ Refresh List';
+                localTaskActive = false;
             }
         }
 
-        // ── Check Updates → 토스트 ─────────────────────────────
+        // ── Check Updates ──────────────────────────────────────
         async function checkUpdates() {
             const btn = document.getElementById('checkBtn');
             btn.disabled = true; btn.innerText = 'Checking...';
+            showStatus('Check Updates', 'Checking for updates...');
             try {
-                const res = await fetch('/api/check-updates', { method: 'POST' });
+                localLog('Checking for updates...');
+                const res  = await fetch('/api/check-updates', { method: 'POST' });
                 const data = await res.json();
-                fetchRegions();
+                data.results.forEach(r => {
+                    if (r.error)      localLog(`⚠ Failed: ${r.name} — ${r.error}`);
+                    else if (r.hasUpdate) localLog(`↑ Update available: ${r.name}`);
+                    else              localLog(`✓ Up to date: ${r.name}`);
+                });
                 const updates = data.results.filter(r => r.hasUpdate);
                 const errors  = data.results.filter(r => r.error);
-                if (updates.length) {
-                    showToast(`<strong>업데이트 있음</strong><br>${updates.map(r => r.name).join(', ')}`, 'warn', 7000);
-                } else if (errors.length) {
-                    showToast(`일부 리전 확인 실패: ${errors.map(r => r.name).join(', ')}`, 'error', 6000);
-                } else {
-                    showToast('모든 리전이 최신 버전입니다.', 'success', 4000);
-                }
+                document.getElementById('taskState').innerText = `Done (${updates.length} updates, ${errors.length} errors)`;
+                localFinalize(errors.length === 0);
+                fetchRegions();
+                if (updates.length)      showToast(`<strong>Updates available</strong><br>${updates.map(r => r.name).join(', ')}`, 'warn', 7000);
+                else if (errors.length)  showToast(`Some regions failed: ${errors.map(r => r.name).join(', ')}`, 'error', 6000);
+                else                     showToast('All regions are up to date.', 'success', 4000);
             } catch (err) {
-                showToast('업데이트 확인 실패: ' + err.message, 'error');
+                localLog('Error: ' + err.message);
+                document.getElementById('taskState').innerText = 'Error';
+                localFinalize(false);
+                showToast('Update check failed: ' + err.message, 'error');
             } finally {
-                btn.disabled = false; btn.innerText = 'Check Geofabrik Updates';
+                btn.disabled = false; btn.innerText = 'Check Updates';
+                localTaskActive = false;
             }
         }
 
-        // ── 빌드 ───────────────────────────────────────────────
+        // ── Build ──────────────────────────────────────────────
         async function updateRegion(id, action) {
-            if (!confirm(`Confirm ${action} for ${id}?`)) return;
+            if (!confirm(`Confirm ${action} for "${id}"?`)) return;
             try {
-                const res = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionId: id }) });
+                const res = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionId: id, source: currentSource, mirror: currentMirror, customMirrorBase }) });
                 if (!res.ok) throw new Error((await res.json()).error);
                 pollStatus();
             } catch (err) { alert(err.message); }
         }
 
         async function removeTiles(id, name) {
-            if (!confirm(`"${name}" 타일 데이터를 삭제하시겠습니까?\n지도 서비스에서 즉시 제거됩니다.`)) return;
+            if (!confirm(`Delete tile data for "${name}"?\nIt will be removed from the map service immediately.`)) return;
             try {
                 const res = await fetch('/api/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionId: id }) });
                 if (!res.ok) throw new Error((await res.json()).error);
@@ -356,37 +526,56 @@
         }
 
         async function cancelTask() {
-            if (!confirm('Cancel current task?')) return;
+            if (!confirm('Cancel the current task?')) return;
             await fetch('/api/cancel', { method: 'POST' });
         }
 
-        // ── Export → 로그 ──────────────────────────────────────
+        // ── Export ─────────────────────────────────────────────
+        async function clearBuildCache() {
+            if (!confirm('Delete build cache files?\n(lake centerline, water polygons, Natural Earth)\nThey will be re-downloaded on the next build.')) return;
+            const btn = document.getElementById('clearCacheBtn');
+            btn.disabled = true; btn.textContent = '🗑 Clearing...';
+            try {
+                const res = await fetch('/api/build-cache', { method: 'DELETE' });
+                const data = await res.json();
+                const deleted = data.results.filter(r => r.deleted).map(r => r.file);
+                const skipped = data.results.filter(r => !r.deleted).map(r => r.file);
+                let msg = '';
+                if (deleted.length) msg += `Deleted: ${deleted.join(', ')}\n`;
+                if (skipped.length) msg += `Not found (already clean): ${skipped.join(', ')}`;
+                alert(msg.trim() || 'Done.');
+            } catch (e) {
+                alert('Error: ' + e.message);
+            } finally {
+                btn.disabled = false; btn.textContent = '🗑 Clear Build Cache';
+            }
+        }
+
         async function exportSelected() {
-            const selected = Array.from(document.querySelectorAll('input[name="regionSelect"]:checked')).map(c => c.value);
-            if (!selected.length) return alert('Select a downloaded region.');
-            showStatus('Export · ZIP 내보내기', '준비 중...');
+            const selected = Array.from(document.querySelectorAll('input[name="regionSelect"]:not(:disabled):checked')).map(c => c.value);
+            if (!selected.length) return alert('Select a downloaded region to export.');
+            showStatus('Export · ZIP', 'Preparing...');
             const btn = document.getElementById('exportBtn'); btn.disabled = true;
             try {
-                localLog(`선택 리전: ${selected.join(', ')}`);
-                localLog('서버에서 ZIP 생성 요청 중...');
-                document.getElementById('taskState').innerText = 'ZIP 생성 중...';
+                localLog(`Selected: ${selected.join(', ')}`);
+                localLog('Requesting ZIP generation...');
+                document.getElementById('taskState').innerText = 'Generating ZIP...';
                 const res = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionIds: selected }) });
-                if (!res.ok) throw new Error('서버 오류: ' + res.status);
-                localLog('ZIP 생성 완료, 다운로드 시작...');
-                document.getElementById('taskState').innerText = '다운로드 중...';
+                if (!res.ok) throw new Error('Server error: ' + res.status);
+                localLog('ZIP ready, starting download...');
+                document.getElementById('taskState').innerText = 'Downloading...';
                 const disposition = res.headers.get('Content-Disposition') || '';
-                const filename = (disposition.match(/filename="([^"]+)"/) || [])[1] || 'osm-export.zip';
+                const filename = (disposition.match(/filename="([^"]+)"/) || [])[1] || 'vectormapforge-export.zip';
                 const blob = await res.blob();
-                const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
-                localLog(`파일 크기: ${sizeMB} MB`);
+                localLog(`File size: ${(blob.size / 1024 / 1024).toFixed(1)} MB`);
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
-                localLog(`${filename} 다운로드 완료.`);
-                document.getElementById('taskState').innerText = '완료';
+                localLog(`${filename} downloaded.`);
+                document.getElementById('taskState').innerText = 'Done';
                 localFinalize(true);
             } catch (e) {
-                localLog('오류: ' + e.message);
-                document.getElementById('taskState').innerText = '오류';
+                localLog('Error: ' + e.message);
+                document.getElementById('taskState').innerText = 'Error';
                 localFinalize(false);
             } finally {
                 btn.disabled = false;
@@ -394,36 +583,36 @@
             }
         }
 
-        // ── Import → 로그 ──────────────────────────────────────
+        // ── Import ─────────────────────────────────────────────
         async function importZip() {
             const fileInput = document.getElementById('importFile');
             if (!fileInput.files.length) return alert('Select a .zip file.');
             const file = fileInput.files[0];
-            showStatus('Import · ZIP 가져오기', '업로드 중...');
+            showStatus('Import · ZIP', 'Uploading...');
             try {
-                localLog(`파일: ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`);
-                localLog('서버로 업로드 중...');
+                localLog(`File: ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`);
+                localLog('Uploading to server...');
                 const formData = new FormData(); formData.append('file', file);
                 const res = await fetch('/api/import', { method: 'POST', body: formData });
-                localLog('업로드 완료. 압축 해제 및 적용 중...');
-                document.getElementById('taskState').innerText = '적용 중...';
-                if (!res.ok) throw new Error((await res.json()).error || 'Import 실패');
-                localLog('데이터베이스 업데이트 완료.');
-                localLog('타일서버 재로드 완료.');
-                document.getElementById('taskState').innerText = '완료';
+                localLog('Upload complete. Extracting...');
+                document.getElementById('taskState').innerText = 'Applying...';
+                if (!res.ok) throw new Error((await res.json()).error || 'Import failed');
+                const { imported = [] } = await res.json();
+                localLog(`Imported: ${imported.join(', ')}`);
+                document.getElementById('taskState').innerText = 'Done';
                 localFinalize(true);
                 fetchRegions();
             } catch (e) {
-                localLog('오류: ' + e.message);
-                document.getElementById('taskState').innerText = '오류';
+                localLog('Error: ' + e.message);
+                document.getElementById('taskState').innerText = 'Error';
                 localFinalize(false);
             } finally {
                 localTaskActive = false;
             }
         }
 
-        // ── 빌드 상태 폴링 ─────────────────────────────────────
-        function isTerminalStatus(status) {
+        // ── Build status polling ───────────────────────────────
+        function isTerminal(status) {
             return status === 'Completed' || status === 'Error' || status === 'Cancelled';
         }
 
@@ -431,20 +620,16 @@
             clearTimeout(pollTimer);
             if (localTaskActive) { pollTimer = setTimeout(pollStatus, 2000); return; }
             try {
-                const res = await fetch('/api/status', { cache: 'no-store' });
-                if (!res.ok) throw new Error('status fetch failed');
+                const res  = await fetch('/api/status', { cache: 'no-store' });
+                if (!res.ok) throw new Error();
                 const data = await res.json();
-                const bar = document.getElementById('statusBar');
+                const bar  = document.getElementById('statusBar');
                 if (data.task) {
                     bar.classList.add('active');
                     document.getElementById('taskTitle').innerText = data.task.title || data.task.region || 'Task';
                     document.getElementById('taskState').innerText = data.task.status || '';
-                    document.getElementById('cancelBtn').style.display = isTerminalStatus(data.task.status) ? 'none' : 'inline-block';
-
-                    if (!taskStartTime) {
-                        taskStartTime = Date.now();
-                        if (!elapsedTimer) elapsedTimer = setInterval(updateElapsed, 1000);
-                    }
+                    document.getElementById('cancelBtn').style.display = isTerminal(data.task.status) ? 'none' : 'inline-block';
+                    if (!taskStartTime) { taskStartTime = Date.now(); if (!elapsedTimer) elapsedTimer = setInterval(updateElapsed, 1000); }
 
                     const spinner = document.getElementById('statusSpinner');
                     spinner.className = 'spinner';
@@ -452,11 +637,16 @@
                     else if (data.task.status === 'Error' || data.task.status === 'Cancelled') spinner.classList.add('error');
 
                     const logsEl = document.getElementById('taskLogs');
-                    const wasAtBottom = logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight < 40;
+                    const atBottom = logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight < 40;
                     logsEl.innerText = data.task.logs || '';
-                    if (wasAtBottom) logsEl.scrollTop = logsEl.scrollHeight;
+                    if (atBottom) logsEl.scrollTop = logsEl.scrollHeight;
 
-                    if (!isTerminalStatus(data.task.status)) {
+                    if (data.task.regionId) {
+                        const buildBtn = document.getElementById(`buildBtn-${data.task.regionId}`);
+                        if (buildBtn && !isTerminal(data.task.status)) { buildBtn.disabled = true; buildBtn.textContent = '⏳ Building...'; }
+                    }
+
+                    if (!isTerminal(data.task.status)) {
                         pollTimer = setTimeout(pollStatus, 1500);
                     } else {
                         fetchRegions();
@@ -467,27 +657,23 @@
                     taskStartTime = null;
                     clearInterval(elapsedTimer); elapsedTimer = null;
                 }
-            } catch (e) {
+            } catch (_) {
                 pollTimer = setTimeout(pollStatus, 3000);
             }
         }
 
-        // ── 빌드 비활성화 체크 ─────────────────────────────────────
+        // ── Config ─────────────────────────────────────────────
         let buildDisabled = false;
         async function loadConfig() {
             try {
                 const res = await fetch('/api/config');
                 const cfg = await res.json();
                 buildDisabled = cfg.buildDisabled;
-                if (buildDisabled) {
-                    document.getElementById('checkBtn').title = 'Build is disabled on this server';
-                }
-            } catch(e) {}
+            } catch(_) {}
         }
 
-        fetchRegions();
+        loadConfig().then(() => loadSources()).then(() => fetchRegions());
         pollStatus();
-        loadConfig();
     </script>
 </body>
 </html>

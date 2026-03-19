@@ -1,13 +1,11 @@
-# OSM Vector Server Specific
-data/
-tileserver/fonts/
-tileserver/styles/
-tileserver/*.toml
-tileserver/*.json
-node_modules/
-npm-debug.log
+# TileForge
+manager/node_modules/
+*.mbtiles
+*.osm.pbf
+*.zip
 .env
 
+# ---------------
 # Created by https://www.toptal.com/developers/gitignore/api/windows,linux,macos
 # Edit at https://www.toptal.com/developers/gitignore?templates=windows,linux,macos
 

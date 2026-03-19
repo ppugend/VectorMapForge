@@ -8,82 +8,164 @@ const AdmZip = require('adm-zip');
 const multer = require('multer');
 const { Database } = require('bun:sqlite');
 
-const PUBLIC_PORT = parseInt(process.env.PUBLIC_PORT || '3000');
-const ADMIN_PORT  = parseInt(process.env.ADMIN_PORT  || '3001');
+const PUBLIC_PORT    = parseInt(process.env.PUBLIC_PORT || '3000');
+const ADMIN_PORT     = parseInt(process.env.ADMIN_PORT  || '3001');
 const BUILD_DISABLED = process.env.BUILD_DISABLED === 'true';
-const PUBLIC_URL = process.env.PUBLIC_URL || null; // e.g. https://tiles.example.com
+const PUBLIC_URL     = process.env.PUBLIC_URL || null;
 
-const DATA_DIR        = process.env.DATA_DIR  || '/osm_data';
-const TEMP_DIR        = process.env.TEMP_DIR  || '/osm_temp';
+const DATA_DIR        = process.env.DATA_DIR || '/osm_data';
+const TEMP_DIR        = process.env.TEMP_DIR || '/osm_temp';
 const DB_PATH         = path.join(DATA_DIR, 'db.json');
 const TILESERVER_ROOT = path.join(DATA_DIR, 'tileserver');
-const GEOFABRIK_INDEX_PATH = path.join(DATA_DIR, 'geofabrik-index.json');
 
 const upload = multer({ dest: '/tmp/uploads/' });
 
+// ── Database ──────────────────────────────────────────────────────────────────
 let db = { regions: {} };
 if (fs.existsSync(DB_PATH)) {
   try { db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); } catch (e) {}
 }
 function saveDb() { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
 
-// ── Geofabrik index ──────────────────────────────────────────────────────────
-let geofabrikRegions = [];
-function getRegionById(id) { return geofabrikRegions.find(r => r.id === id) || null; }
-
-function getBboxCenter(feature) {
-  const coords = [];
-  function collect(arr) {
-    if (!Array.isArray(arr)) return;
-    if (typeof arr[0] === 'number') { coords.push(arr); return; }
-    arr.forEach(collect);
-  }
-  collect(feature.geometry && feature.geometry.coordinates);
-  if (!coords.length) return [0, 0];
-  const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
-  return [
-    +((Math.min(...lons) + Math.max(...lons)) / 2).toFixed(4),
-    +((Math.min(...lats) + Math.max(...lats)) / 2).toFixed(4),
-  ];
-}
-
-function fetchAndCacheGeofabrikIndex() {
+// ── Fetch helper ──────────────────────────────────────────────────────────────
+function fetchText(url) {
   return new Promise((resolve, reject) => {
-    https.get('https://download.geofabrik.de/index-v1.json', (res) => {
-      let data = '';
-      res.on('data', d => data += d);
-      res.on('end', () => {
-        try {
-          const geojson = JSON.parse(data);
-          geofabrikRegions = geojson.features
-            .filter(f => f.properties && f.properties.urls && f.properties.urls.pbf)
-            .map(f => ({
-              id: f.properties.id, name: f.properties.name,
-              url: f.properties.urls.pbf,
-              parent: f.properties.parent || null,
-              center: getBboxCenter(f),
-            }));
-          fs.writeFileSync(GEOFABRIK_INDEX_PATH, JSON.stringify(geofabrikRegions, null, 2));
-          console.log(`Fetched and cached ${geofabrikRegions.length} Geofabrik regions`);
-          resolve();
-        } catch(e) { reject(e); }
-      });
+    const get = url.startsWith('https') ? https.get : http.get;
+    get(url, r => {
+      if (r.statusCode >= 300 && r.statusCode < 400) return resolve(fetchText(r.headers.location));
+      if (r.statusCode >= 400) { r.resume(); return reject(new Error(`HTTP ${r.statusCode}: ${url}`)); }
+      let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(d.trim()));
     }).on('error', reject);
   });
 }
 
-function loadGeofabrikIndex() {
-  if (fs.existsSync(GEOFABRIK_INDEX_PATH)) {
-    try {
-      geofabrikRegions = JSON.parse(fs.readFileSync(GEOFABRIK_INDEX_PATH, 'utf8'));
-      console.log(`Loaded ${geofabrikRegions.length} Geofabrik regions from cache`);
-      return Promise.resolve();
-    } catch(e) {}
-  }
-  return fetchAndCacheGeofabrikIndex();
+// ── Sources ───────────────────────────────────────────────────────────────────
+// Each source: { id, name, desc, cacheFile, fetch(), getMd5(region) }
+const regionsBySource = {};
+
+async function fetchGeofabrikIndex() {
+  const html = await fetchText('https://download.geofabrik.de/index-v1.json');
+  const geojson = JSON.parse(html);
+  return geojson.features
+    .filter(f => f.properties?.urls?.pbf)
+    .map(f => {
+      const coords = [];
+      function collect(arr) {
+        if (!Array.isArray(arr)) return;
+        if (typeof arr[0] === 'number') { coords.push(arr); return; }
+        arr.forEach(collect);
+      }
+      collect(f.geometry?.coordinates);
+      let center = [0, 0];
+      if (coords.length) {
+        const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
+        center = [
+          +((Math.min(...lons) + Math.max(...lons)) / 2).toFixed(4),
+          +((Math.min(...lats) + Math.max(...lats)) / 2).toFixed(4),
+        ];
+      }
+      return {
+        id:     f.properties.id.replace(/\//g, '--'),
+        name:   f.properties.name,
+        url:    f.properties.urls.pbf,
+        parent: f.properties.parent || null,
+        center,
+      };
+    });
 }
 
-// ── MBTiles cache ────────────────────────────────────────────────────────────
+async function fetchBBBikeIndex() {
+  const html = await fetchText('https://download.bbbike.org/osm/bbbike/');
+  const skip = new Set(['Metadata', 'Screenshots', 'CHECKSUM']);
+  const regions = [];
+  const regex = /href="([A-Z][^"\/]{1,60})\/"/g;
+  let m;
+  while ((m = regex.exec(html)) !== null) {
+    const hrefName = m[1];
+    const name = decodeURIComponent(hrefName);
+    if (skip.has(name)) continue;
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    regions.push({
+      id,
+      name,
+      url: `https://download.bbbike.org/osm/bbbike/${hrefName}/${hrefName}.osm.pbf`,
+      parent: null,
+      center: null,
+    });
+  }
+  return regions;
+}
+
+const SOURCES = [
+  {
+    id: 'geofabrik',
+    name: 'Geofabrik',
+    desc: 'Country & regional extracts (~512 regions)',
+    canonicalBase: 'https://download.geofabrik.de',
+    mirrors: [
+      { id: 'official',  name: 'Official (download.geofabrik.de)' },
+      { id: 'custom',    name: 'Custom URL...' },
+    ],
+    cacheFile: () => path.join(DATA_DIR, 'geofabrik-index.json'),
+    fetch: fetchGeofabrikIndex,
+    mirrorUrl(region, mirrorBase) {
+      return region.url.replace(this.canonicalBase, mirrorBase || this.canonicalBase);
+    },
+    async getMd5(canonicalUrl) {
+      const text = await fetchText(canonicalUrl + '.md5');
+      return text.split(/\s+/)[0];
+    },
+  },
+  {
+    id: 'bbbike',
+    name: 'BBBike',
+    desc: 'City-level extracts (~200 cities)',
+    canonicalBase: 'https://download.bbbike.org/osm/bbbike',
+    mirrors: [
+      { id: 'official', name: 'Official (download.bbbike.org)' },
+      { id: 'gwdg',     name: 'GWDG Mirror (Germany)',         base: 'https://ftp5.gwdg.de/pub/misc/openstreetmap/download.bbbike.org/osm/bbbike' },
+      { id: 'utwente',  name: 'Univ. of Twente (Netherlands)', base: 'https://ftp.snt.utwente.nl/pub/misc/openstreetmap/download.bbbike.org/osm/bbbike' },
+      { id: 'custom',   name: 'Custom URL...' },
+    ],
+    cacheFile: () => path.join(DATA_DIR, 'bbbike-index.json'),
+    fetch: fetchBBBikeIndex,
+    mirrorUrl(region, mirrorBase) {
+      return region.url.replace(this.canonicalBase, mirrorBase || this.canonicalBase);
+    },
+    async getMd5(canonicalUrl) {
+      const dir = canonicalUrl.substring(0, canonicalUrl.lastIndexOf('/'));
+      const text = await fetchText(`${dir}/CHECKSUM.txt`);
+      const line = text.split('\n').find(l => /\.osm\.pbf\s*$/.test(l.trim()));
+      return line ? line.trim().split(/\s+/)[0] : null;
+    },
+  },
+];
+
+function getSource(id) { return SOURCES.find(s => s.id === id); }
+function getRegionById(id, sourceId) {
+  const list = regionsBySource[sourceId] || [];
+  // Try exact match first, then try slash↔dash conversions for backward compatibility
+  return list.find(r => r.id === id)
+      || list.find(r => r.id === id.replace(/\//g, '--'))
+      || list.find(r => r.id === id.replace(/--/g, '/'))
+      || null;
+}
+
+async function loadSourceIndex(source) {
+  const cacheFile = source.cacheFile();
+  if (fs.existsSync(cacheFile)) {
+    try {
+      regionsBySource[source.id] = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      console.log(`Loaded ${regionsBySource[source.id].length} ${source.id} regions from cache`);
+      return;
+    } catch (e) {}
+  }
+  regionsBySource[source.id] = await source.fetch();
+  fs.writeFileSync(cacheFile, JSON.stringify(regionsBySource[source.id], null, 2));
+  console.log(`Fetched ${regionsBySource[source.id].length} ${source.id} regions`);
+}
+
+// ── MBTiles cache ─────────────────────────────────────────────────────────────
 const mbtilesCache = new Map();
 
 function getMbtilesDb(regionId) {
@@ -96,20 +178,18 @@ function getMbtilesDb(regionId) {
 }
 
 function closeMbtilesDb(regionId) {
-  if (mbtilesCache.has(regionId)) {
-    try { mbtilesCache.get(regionId).close(); } catch(e) {}
-    mbtilesCache.delete(regionId);
-  }
+  if (!mbtilesCache.has(regionId)) return;
+  try { mbtilesCache.get(regionId).close(); } catch (e) {}
+  mbtilesCache.delete(regionId);
 }
 
-// ── Style generation ─────────────────────────────────────────────────────────
+// ── Style generation ──────────────────────────────────────────────────────────
 function generateRegionStyle(regionId) {
   const baseStylePath = path.join(TILESERVER_ROOT, 'styles/osm-bright/style.json');
-  const regionStyleDir = path.join(TILESERVER_ROOT, `styles/${regionId}`);
   if (!fs.existsSync(baseStylePath)) return;
   try {
     const style = JSON.parse(fs.readFileSync(baseStylePath, 'utf8'));
-    if (style.sources && style.sources.openmaptiles) {
+    if (style.sources?.openmaptiles) {
       style.sources[regionId] = { ...style.sources.openmaptiles, url: `mbtiles://${regionId}` };
       delete style.sources.openmaptiles;
     }
@@ -118,27 +198,30 @@ function generateRegionStyle(regionId) {
         l.source === 'openmaptiles' ? { ...l, source: regionId } : l
       );
     }
-    fs.mkdirSync(regionStyleDir, { recursive: true });
-    fs.writeFileSync(path.join(regionStyleDir, 'style.json'), JSON.stringify(style, null, 2));
-  } catch (e) { console.error(`Failed to generate style for ${regionId}:`, e.message); }
+    const dir = path.join(TILESERVER_ROOT, `styles/${regionId}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'style.json'), JSON.stringify(style, null, 2));
+  } catch (e) { console.error(`Style generation failed for ${regionId}:`, e.message); }
 }
 
-// ── Bootstrap & provisioning ─────────────────────────────────────────────────
+// ── Bootstrap & provisioning ──────────────────────────────────────────────────
 function bootstrap() {
   [
-    path.join(DATA_DIR, 'pbf'), path.join(DATA_DIR, 'mbtiles'),
-    path.join(DATA_DIR, 'sources'), TILESERVER_ROOT,
-    path.join(TILESERVER_ROOT, 'styles'), path.join(TILESERVER_ROOT, 'fonts'),
+    path.join(DATA_DIR, 'pbf'),
+    path.join(DATA_DIR, 'mbtiles'),
+    path.join(DATA_DIR, 'sources'),
+    TILESERVER_ROOT,
+    path.join(TILESERVER_ROOT, 'styles'),
+    path.join(TILESERVER_ROOT, 'fonts'),
     path.join(TEMP_DIR, 'work'),
-  ].forEach(f => { if (!fs.existsSync(f)) fs.mkdirSync(f, { recursive: true }); });
+  ].forEach(d => fs.mkdirSync(d, { recursive: true }));
 }
 
 function sh(cmd) {
-  return new Promise((resolve, reject) => {
-    spawn('sh', ['-c', cmd], { stdio: 'inherit' }).on('close', code =>
-      code === 0 ? resolve() : reject(new Error(`sh failed (${code}): ${cmd}`))
-    );
-  });
+  return new Promise((resolve, reject) =>
+    spawn('sh', ['-c', cmd], { stdio: 'inherit' })
+      .on('close', code => code === 0 ? resolve() : reject(new Error(`sh failed (${code}): ${cmd}`)))
+  );
 }
 
 async function provisionStyles() {
@@ -162,39 +245,40 @@ async function provisionFonts() {
   console.log('Fonts provisioned.');
 }
 
-// ── Build task ───────────────────────────────────────────────────────────────
+// ── Build helpers ─────────────────────────────────────────────────────────────
 let currentTask = null;
 
 function runCommand(command, args, onLog) {
   return new Promise((resolve, reject) => {
     const proc = spawn(command, args);
     if (currentTask) currentTask.process = proc;
-    proc.stdout.on('data', d => onLog && onLog(d.toString()));
-    proc.stderr.on('data', d => onLog && onLog(d.toString()));
+    proc.stdout.on('data', d => onLog?.(d.toString()));
+    proc.stderr.on('data', d => onLog?.(d.toString()));
     proc.on('close', code => {
       if (currentTask) currentTask.process = null;
       if (code === 0) resolve();
-      else if (currentTask && currentTask.aborted) reject(new Error('Task cancelled by user'));
+      else if (currentTask?.aborted) reject(new Error('Task cancelled by user'));
       else reject(new Error(`Failed with code ${code}`));
     });
   });
 }
 
-function downloadFileWithProgress(url, dest, onProgress, onLog) {
+function downloadFile(url, dest, onProgress) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
     const get = url.startsWith('https') ? https.get : http.get;
     const request = get(url, (res) => {
       if (res.statusCode === 301 || res.statusCode === 302) {
-        return resolve(downloadFileWithProgress(res.headers.location, dest, onProgress, onLog));
+        file.close();
+        return resolve(downloadFile(res.headers.location, dest, onProgress));
       }
-      const totalSize = parseInt(res.headers['content-length'], 10);
-      let downloadedSize = 0, lastPercent = -1;
-      res.on('data', (chunk) => {
-        downloadedSize += chunk.length;
-        if (totalSize) {
-          const percent = Math.floor((downloadedSize / totalSize) * 100);
-          if (percent !== lastPercent) { lastPercent = percent; onProgress && onProgress(percent, downloadedSize, totalSize); }
+      const total = parseInt(res.headers['content-length'], 10);
+      let downloaded = 0, lastPercent = -1;
+      res.on('data', chunk => {
+        downloaded += chunk.length;
+        if (total) {
+          const pct = Math.floor((downloaded / total) * 100);
+          if (pct !== lastPercent) { lastPercent = pct; onProgress?.(pct, downloaded, total); }
         }
       });
       res.pipe(file);
@@ -205,25 +289,20 @@ function downloadFileWithProgress(url, dest, onProgress, onLog) {
   });
 }
 
-// ── URL helper ───────────────────────────────────────────────────────────────
-// Returns origin for tile/style URLs.
-// Uses request's own host header — works correctly when accessed via the mapped external port.
-// Set PUBLIC_URL env var when behind a reverse proxy or to force a specific base URL.
+// ── URL helper ────────────────────────────────────────────────────────────────
 function getPublicOrigin(req) {
-  if (PUBLIC_URL) return PUBLIC_URL;
-  return `${req.protocol}://${req.get('host')}`;
+  return PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
 }
 
-// ── Public app (tiles, styles, fonts, sprites, viewer) ───────────────────────
+// ── Public app ────────────────────────────────────────────────────────────────
 const publicApp = express();
 publicApp.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); next(); });
 
 publicApp.get('/favicon.ico', (req, res) => res.redirect('/favicon.svg'));
-publicApp.get('/favicon.svg', (req, res) => res.sendFile(path.join(__dirname, 'public/favicon.svg')));
-publicApp.get('/viewer.html', (req, res) => res.sendFile(path.join(__dirname, 'public/viewer.html')));
+publicApp.get('/favicon.svg',  (req, res) => res.sendFile(path.join(__dirname, 'public/favicon.svg')));
+publicApp.get('/viewer.html',  (req, res) => res.sendFile(path.join(__dirname, 'public/viewer.html')));
 publicApp.use('/sprites', express.static(path.join(__dirname, 'public/sprites')));
 
-// TileJSON
 publicApp.get('/data/:id.json', (req, res) => {
   const mdb = getMbtilesDb(req.params.id);
   if (!mdb) return res.status(404).json({ error: 'Region not found' });
@@ -232,42 +311,41 @@ publicApp.get('/data/:id.json', (req, res) => {
     mdb.query('SELECT name, value FROM metadata').all().forEach(r => { meta[r.name] = r.value; });
     const origin = getPublicOrigin(req);
     res.json({
-      tilejson: '3.0.0', id: req.params.id,
-      name: meta.name || req.params.id,
+      tilejson:    '3.0.0',
+      id:          req.params.id,
+      name:        meta.name || req.params.id,
       description: meta.description || '',
-      minzoom: parseInt(meta.minzoom) || 0,
-      maxzoom: parseInt(meta.maxzoom) || 14,
-      format: meta.format || 'pbf',
-      tiles: [`${origin}/data/${req.params.id}/{z}/{x}/{y}.pbf`],
-      bounds: meta.bounds ? meta.bounds.split(',').map(Number) : [-180, -85, 180, 85],
-      center: meta.center ? meta.center.split(',').map(Number) : [0, 0, 2],
+      minzoom:     parseInt(meta.minzoom) || 0,
+      maxzoom:     parseInt(meta.maxzoom) || 14,
+      format:      meta.format || 'pbf',
+      tiles:       [`${origin}/data/${req.params.id}/{z}/{x}/{y}.pbf`],
+      bounds:      meta.bounds ? meta.bounds.split(',').map(Number) : [-180, -85, 180, 85],
+      center:      meta.center ? meta.center.split(',').map(Number) : [0, 0, 2],
       attribution: meta.attribution || '',
     });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Vector tile
 publicApp.get('/data/:id/:z/:x/:y.pbf', (req, res) => {
   const { id, z, x, y } = req.params;
   const mdb = getMbtilesDb(id);
   if (!mdb) return res.status(404).send('Region not found');
   try {
     const zi = parseInt(z), xi = parseInt(x), yi = parseInt(y);
-    const tmsY = Math.pow(2, zi) - 1 - yi;
+    const tmsY = (1 << zi) - 1 - yi;
     const row = mdb.query('SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?').get(zi, xi, tmsY);
-    if (!row) return res.status(404).send(`Tile not found: z=${zi}, x=${xi}, y=${yi}`);
+    if (!row) return res.status(204).end();
     res.set('Content-Type', 'application/x-protobuf');
     res.set('Content-Encoding', 'gzip');
     res.set('Cache-Control', 'public, max-age=86400');
     res.send(Buffer.from(row.tile_data));
-  } catch(e) { res.status(500).send(e.message); }
+  } catch (e) { res.status(500).send(e.message); }
 });
 
-// Style JSON (rewrites mbtiles:// URLs dynamically)
 publicApp.get('/styles/:id/style.json', (req, res) => {
   const regionId = req.params.id.replace(/-pretty$/, '');
   const stylePath = path.join(TILESERVER_ROOT, 'styles', regionId, 'style.json');
-  if (!fs.existsSync(stylePath)) return res.status(404).json({ error: `Style not found: ${req.params.id}` });
+  if (!fs.existsSync(stylePath)) return res.status(404).json({ error: `Style not found: ${regionId}` });
   try {
     const style = JSON.parse(fs.readFileSync(stylePath, 'utf8'));
     const origin = getPublicOrigin(req);
@@ -279,10 +357,9 @@ publicApp.get('/styles/:id/style.json', (req, res) => {
     if (style.sprite) style.sprite = `${origin}/sprites/sprite`;
     style.glyphs = `${origin}/fonts/{fontstack}/{range}.pbf`;
     res.json(style);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Fonts
 publicApp.get('/fonts/:fontstack/:range.pbf', (req, res) => {
   const fontPath = path.join(TILESERVER_ROOT, 'fonts', req.params.fontstack, `${req.params.range}.pbf`);
   if (!fs.existsSync(fontPath)) return res.status(404).send('Font not found');
@@ -291,127 +368,163 @@ publicApp.get('/fonts/:fontstack/:range.pbf', (req, res) => {
   res.sendFile(fontPath);
 });
 
-// ── Admin app (public routes + dashboard + API) ───────────────────────────────
+// ── Admin app ─────────────────────────────────────────────────────────────────
 const adminApp = express();
 adminApp.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); next(); });
 adminApp.use(express.json());
 adminApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
-adminApp.use(publicApp); // inherit all public routes
-adminApp.use('/debug.html', (req, res) => res.status(404).send('Not Found'));
+adminApp.use(publicApp);
 adminApp.use(express.static(path.join(__dirname, 'public')));
-
-adminApp.use('/api', (req, res, next) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  next();
-});
-
-adminApp.get('/api/tiles', (req, res) => {
-  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
-  const files = fs.existsSync(mbtilesDir) ? fs.readdirSync(mbtilesDir).filter(f => f.endsWith('.mbtiles')) : [];
-  const tiles = files.map(f => {
-    const id = f.replace('.mbtiles', '');
-    const p = path.join(mbtilesDir, f);
-    const size = fs.statSync(p).size;
-    const region = geofabrikRegions.find(r => r.id === id);
-    const status = db.regions[id] || {};
-    return { id, name: region ? region.name : id, size, lastUpdate: status.lastUpdate || null };
-  });
-  tiles.sort((a, b) => a.name.localeCompare(b.name));
-  res.json(tiles);
-});
+adminApp.use('/api', (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
 adminApp.get('/api/config', (req, res) => {
   res.json({ buildDisabled: BUILD_DISABLED });
 });
 
-adminApp.get('/api/regions', (req, res) => {
-  const regionsWithStatus = geofabrikRegions.map(r => {
-    const status = db.regions[r.id] || {};
-    const mbtilesPath = path.join(DATA_DIR, 'mbtiles', `${r.id}.mbtiles`);
-    const hasMbtiles = fs.existsSync(mbtilesPath);
-    const mbtilesSize = hasMbtiles ? fs.statSync(mbtilesPath).size : 0;
-    return { ...r, status, hasMbtiles, mbtilesSize };
+adminApp.get('/api/sources', (req, res) => {
+  res.json(SOURCES.map(s => ({
+    id:      s.id,
+    name:    s.name,
+    desc:    s.desc,
+    count:   (regionsBySource[s.id] || []).length,
+    mirrors: s.mirrors,
+  })));
+});
+
+adminApp.get('/api/tiles', (req, res) => {
+  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
+  const files = fs.existsSync(mbtilesDir)
+    ? fs.readdirSync(mbtilesDir).filter(f => f.endsWith('.mbtiles'))
+    : [];
+  const tiles = files.map(f => {
+    const id = f.replace('.mbtiles', '');
+    const record = db.regions[id] || {};
+    const sourceId = record.sourceId || 'geofabrik';
+    const region = getRegionById(id, sourceId);
+    return {
+      id,
+      name:       region?.name || id,
+      size:       fs.statSync(path.join(mbtilesDir, f)).size,
+      lastUpdate: record.lastUpdate || null,
+    };
   });
-  regionsWithStatus.sort((a, b) => (b.hasMbtiles ? 1 : 0) - (a.hasMbtiles ? 1 : 0));
-  res.json(regionsWithStatus);
+  tiles.sort((a, b) => a.name.localeCompare(b.name));
+  res.json(tiles);
+});
+
+adminApp.get('/api/regions', (req, res) => {
+  const sourceId = req.query.source || 'geofabrik';
+  const regions = (regionsBySource[sourceId] || []).map(r => {
+    const mbtilesPath = path.join(DATA_DIR, 'mbtiles', `${r.id}.mbtiles`);
+    const hasMbtiles  = fs.existsSync(mbtilesPath);
+    return {
+      ...r,
+      status:      db.regions[r.id] || {},
+      hasMbtiles,
+      mbtilesSize: hasMbtiles ? fs.statSync(mbtilesPath).size : 0,
+      pbfBytes:    db.regions[r.id]?.pbfBytes || 0,
+    };
+  });
+  regions.sort((a, b) => (b.hasMbtiles ? 1 : 0) - (a.hasMbtiles ? 1 : 0));
+  res.json(regions);
 });
 
 adminApp.get('/api/status', (req, res) => {
   if (!currentTask) return res.json({ task: null });
-  const { process: _proc, request: _req, ...taskData } = currentTask;
-  const lines = (taskData.logs || '').split('\n');
-  taskData.logs = lines.slice(-200).join('\n');
+  const { process: _p, request: _r, ...taskData } = currentTask;
+  taskData.logs = (taskData.logs || '').split('\n').slice(-200).join('\n');
   res.json({ task: taskData });
 });
 
 adminApp.post('/api/cancel', (req, res) => {
   if (!currentTask) return res.status(400).json({ error: 'No task running' });
   currentTask.aborted = true;
-  if (currentTask.process) currentTask.process.kill('SIGKILL');
-  if (currentTask.request) currentTask.request.destroy();
+  currentTask.process?.kill('SIGKILL');
+  currentTask.request?.destroy();
   currentTask.status = 'Cancelled';
   currentTask.logs += '\n--- TASK CANCELLED BY USER ---\n';
-  res.json({ message: 'Cancellation requested' });
+  res.json({ ok: true });
   setTimeout(() => { currentTask = null; }, 5000);
 });
 
 adminApp.post('/api/remove', (req, res) => {
   const { regionId } = req.body;
-  if (!regionId) return res.status(400).json({ error: 'No regionId' });
+  if (!regionId) return res.status(400).json({ error: 'regionId required' });
   try {
     closeMbtilesDb(regionId);
-    const mbtilesPath = path.join(DATA_DIR, 'mbtiles', `${regionId}.mbtiles`);
-    if (fs.existsSync(mbtilesPath)) fs.unlinkSync(mbtilesPath);
+    const p = path.join(DATA_DIR, 'mbtiles', `${regionId}.mbtiles`);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
     delete db.regions[regionId];
     saveDb();
-    res.json({ message: `Removed ${regionId}` });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-adminApp.post('/api/check-updates', async (req, res) => {
+adminApp.delete('/api/build-cache', (req, res) => {
+  const files = [
+    'lake_centerline.shp.zip',
+    'water-polygons-split-3857.zip',
+    'natural_earth_vector.sqlite.zip',
+  ];
   const results = [];
-  for (const regionId of Object.keys(db.regions).filter(id => db.regions[id].localMd5)) {
-    const region = getRegionById(regionId);
-    if (!region) { results.push({ id: regionId, name: regionId, error: true }); continue; }
-    try {
-      const get = region.url.startsWith('https') ? https.get : http.get;
-      const fetchText = (url) => new Promise((resolve, reject) => {
-        get(url, r => {
-          if (r.statusCode >= 300 && r.statusCode < 400) return resolve(fetchText(r.headers.location));
-          let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(d.trim()));
-        }).on('error', reject);
-      });
-      const remoteMd5 = (await fetchText(region.url + '.md5')).split(/\s+/)[0];
-      db.regions[region.id].remoteMd5 = remoteMd5;
-      db.regions[region.id].lastCheck = new Date().toISOString();
-      saveDb();
-      const local = db.regions[region.id];
-      results.push({ id: region.id, name: region.name, hasUpdate: !!(local.localMd5 && local.localMd5 !== remoteMd5), isNew: false });
-    } catch (e) { results.push({ id: region.id, name: region.name, error: true }); }
+  for (const f of files) {
+    const p = path.join(DATA_DIR, 'sources', f);
+    if (fs.existsSync(p)) {
+      fs.unlinkSync(p);
+      results.push({ file: f, deleted: true });
+    } else {
+      results.push({ file: f, deleted: false, reason: 'not found' });
+    }
   }
   res.json({ results });
 });
 
-adminApp.post('/api/refresh-geofabrik', async (req, res) => {
+adminApp.post('/api/check-updates', async (req, res) => {
+  const results = [];
+  for (const id of Object.keys(db.regions).filter(id => db.regions[id].localMd5)) {
+    const record   = db.regions[id];
+    const sourceId = record.sourceId || 'geofabrik';
+    const source   = getSource(sourceId);
+    const region   = getRegionById(id, sourceId);
+    if (!region || !source) { results.push({ id, name: id, error: true }); continue; }
+    try {
+      const remoteMd5 = await source.getMd5(region.url);
+      db.regions[id].remoteMd5 = remoteMd5;
+      db.regions[id].lastCheck = new Date().toISOString();
+      saveDb();
+      results.push({ id, name: region.name, hasUpdate: record.localMd5 !== remoteMd5 });
+    } catch (e) { results.push({ id, name: region.name, error: e.message }); }
+  }
+  res.json({ results });
+});
+
+adminApp.post('/api/refresh-source', async (req, res) => {
+  const sourceId = req.body.source || 'geofabrik';
+  const source = getSource(sourceId);
+  if (!source) return res.status(400).json({ error: `Unknown source: ${sourceId}` });
   try {
-    await fetchAndCacheGeofabrikIndex();
-    res.json({ count: geofabrikRegions.length });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    regionsBySource[source.id] = await source.fetch();
+    fs.writeFileSync(source.cacheFile(), JSON.stringify(regionsBySource[source.id], null, 2));
+    res.json({ count: regionsBySource[source.id].length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 adminApp.post('/api/export', (req, res) => {
   const { regionIds } = req.body;
+  if (!regionIds?.length) return res.status(400).json({ error: 'regionIds required' });
   const zip = new AdmZip();
   const exportDb = { regions: {} };
   regionIds.forEach(id => {
     const p = path.join(DATA_DIR, 'mbtiles', `${id}.mbtiles`);
-    if (fs.existsSync(p)) { zip.addLocalFile(p); if (db.regions[id]) exportDb.regions[id] = db.regions[id]; }
+    if (fs.existsSync(p)) {
+      zip.addLocalFile(p);
+      if (db.regions[id]) exportDb.regions[id] = db.regions[id];
+    }
   });
   zip.addFile('db.json', Buffer.from(JSON.stringify(exportDb, null, 2)));
-  const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
-  const filename = `osm-export-${ts}.zip`;
+  const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   res.set('Content-Type', 'application/zip');
-  res.set('Content-Disposition', `attachment; filename="${filename}"`);
+  res.set('Content-Disposition', `attachment; filename="vectormapforge-export-${ts}.zip"`);
   res.send(zip.toBuffer());
 });
 
@@ -419,62 +532,73 @@ adminApp.post('/api/import', upload.single('file'), (req, res) => {
   try {
     const zip = new AdmZip(req.file.path);
     const dbEntry = zip.getEntry('db.json');
-    if (!dbEntry) throw new Error('No db.json');
+    if (!dbEntry) throw new Error('db.json not found in ZIP');
     const importDb = JSON.parse(dbEntry.getData().toString());
     zip.getEntries().forEach(e => {
-      if (e.entryName.endsWith('.mbtiles')) {
-        const regionId = e.entryName.replace('.mbtiles', '');
-        closeMbtilesDb(regionId);
-        fs.writeFileSync(path.join(DATA_DIR, 'mbtiles', e.entryName), e.getData());
-      }
+      if (!e.entryName.endsWith('.mbtiles')) return;
+      const regionId = e.entryName.replace('.mbtiles', '');
+      closeMbtilesDb(regionId);
+      fs.writeFileSync(path.join(DATA_DIR, 'mbtiles', e.entryName), e.getData());
     });
-    for (const id in importDb.regions) { db.regions[id] = importDb.regions[id]; generateRegionStyle(id); }
+    for (const id in importDb.regions) {
+      db.regions[id] = importDb.regions[id];
+      generateRegionStyle(id);
+    }
     saveDb();
-    res.json({ message: 'Imported' });
+    res.json({ ok: true, imported: Object.keys(importDb.regions) });
   } catch (e) { res.status(500).json({ error: e.message }); }
-  finally { if (req.file) fs.unlinkSync(req.file.path); }
+  finally { if (req.file) fs.unlink(req.file.path, () => {}); }
 });
 
 adminApp.post('/api/update', async (req, res) => {
-  if (BUILD_DISABLED) return res.status(403).json({ error: 'Build disabled. Build on desktop and import.' });
-  const { regionId } = req.body;
-  const region = getRegionById(regionId);
-  if (!region || currentTask) return res.status(400).json({ error: !region ? 'Region not found' : 'Busy' });
+  if (BUILD_DISABLED) return res.status(403).json({ error: 'Build is disabled on this instance.' });
+  const { regionId, source: sourceId = 'geofabrik', mirror: mirrorId, customMirrorBase } = req.body;
+  const source = getSource(sourceId);
+  const region = source ? getRegionById(regionId, sourceId) : null;
+  if (!source)   return res.status(400).json({ error: `Unknown source: ${sourceId}` });
+  if (!region)   return res.status(400).json({ error: 'Region not found' });
+  if (currentTask) return res.status(400).json({ error: 'Another task is running' });
 
-  res.json({ message: 'Update started' });
-  currentTask = { title: `빌드 · ${region.name}`, region: region.name, status: 'Starting...', logs: '', aborted: false };
+  // Resolve mirror base URL
+  const mirrorDef = source.mirrors.find(m => m.id === mirrorId);
+  const mirrorBase = mirrorId === 'custom' ? customMirrorBase
+    : (mirrorDef?.base || source.canonicalBase);
+  const downloadUrl = source.mirrorUrl(region, mirrorBase);
+
+  res.json({ ok: true });
+
+  const pbfPath        = path.join(DATA_DIR, 'pbf', `${region.id}.osm.pbf`);
+  const mbtilesPath    = path.join(DATA_DIR, 'mbtiles', `${region.id}.mbtiles`);
+  const tmpMbtilesPath = path.join(DATA_DIR, 'mbtiles', `${region.id}_temp.mbtiles`);
+  const jvmMemory      = process.env.PLANETILER_JVM_MEMORY || '6g';
+
+  currentTask = { title: `Build · ${region.name}`, region: region.name, regionId: region.id, status: 'Starting...', logs: '', aborted: false };
   const log = m => { if (currentTask) currentTask.logs += m + '\n'; };
-  const pbfPath = path.join(DATA_DIR, 'pbf', `${region.id}.osm.pbf`);
-  const mbtilesPath = path.join(DATA_DIR, 'mbtiles', `${region.id}.mbtiles`);
-  const tempMbtilesPath = path.join(DATA_DIR, 'mbtiles', `${region.id}_temp.mbtiles`);
+  let pbfBytes = 0;
 
   try {
     currentTask.status = 'Downloading PBF...';
-    log(`Downloading ${region.url}...`);
-    await downloadFileWithProgress(region.url, pbfPath, (p, cur, tot) => {
-      currentTask.status = `Downloading: ${p}% (${(cur/1024/1024).toFixed(1)}MB / ${(tot/1024/1024).toFixed(1)}MB)`;
-    }, log);
+    log(`Downloading ${downloadUrl}...`);
+    await downloadFile(downloadUrl, pbfPath, (pct, cur, tot) => {
+      if (tot) pbfBytes = tot;
+      currentTask.status = `Downloading: ${pct}% (${(cur/1048576).toFixed(1)} / ${(tot/1048576).toFixed(1)} MB)`;
+    });
 
     if (currentTask.aborted) throw new Error('Aborted');
 
-    const fetchText = (url) => new Promise((resolve) => {
-      const g = url.startsWith('https') ? https.get : http.get;
-      g(url, r => {
-        if (r.statusCode >= 300 && r.statusCode < 400) return resolve(fetchText(r.headers.location));
-        let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(d.trim()));
-      });
-    });
-    const remoteMd5 = (await fetchText(region.url + '.md5')).split(/\s+/)[0];
+    // MD5 always checked against canonical source
+    const remoteMd5 = await source.getMd5(region.url).catch(() => null);
 
-    currentTask.status = 'Building Vectors...';
-    const jvmMemory = process.env.PLANETILER_JVM_MEMORY || '6g';
+    currentTask.status = 'Building vectors...';
     await runCommand('docker', [
       'run', '--rm',
       '-e', `JAVA_TOOL_OPTIONS=-Xmx${jvmMemory}`,
       '-v', `osm_persistent_data:${DATA_DIR}`,
       '-v', `osm_build_temp:${TEMP_DIR}`,
       'ghcr.io/onthegomap/planetiler:latest',
-      `--osm-path=${pbfPath}`, `--output=${tempMbtilesPath}`, `--tmpdir=${TEMP_DIR}/work`,
+      `--osm-path=${pbfPath}`,
+      `--output=${tmpMbtilesPath}`,
+      `--tmpdir=${TEMP_DIR}/work`,
       `--lake-centerlines-path=${DATA_DIR}/sources/lake_centerline.shp.zip`,
       `--water-polygons-path=${DATA_DIR}/sources/water-polygons-split-3857.zip`,
       `--natural-earth-path=${DATA_DIR}/sources/natural_earth_vector.sqlite.zip`,
@@ -485,19 +609,29 @@ adminApp.post('/api/update', async (req, res) => {
     if (currentTask.aborted) throw new Error('Aborted');
 
     closeMbtilesDb(region.id);
-    fs.renameSync(tempMbtilesPath, mbtilesPath);
+    fs.renameSync(tmpMbtilesPath, mbtilesPath);
     fs.unlink(pbfPath, () => {});
-    db.regions[region.id] = { sourceUrl: region.url, localMd5: remoteMd5, remoteMd5, lastUpdate: new Date().toISOString() };
+    db.regions[region.id] = {
+      sourceId,
+      sourceUrl:  region.url,
+      localMd5:   remoteMd5,
+      remoteMd5,
+      pbfBytes:   pbfBytes || db.regions[region.id]?.pbfBytes || 0,
+      lastUpdate: new Date().toISOString(),
+    };
     saveDb();
     generateRegionStyle(region.id);
 
     currentTask.status = 'Completed';
     log('--- DONE ---');
-    setTimeout(() => { if (currentTask && currentTask.status === 'Completed') currentTask = null; }, 10000);
+    setTimeout(() => { if (currentTask?.status === 'Completed') currentTask = null; }, 10000);
   } catch (e) {
-    if (currentTask) { currentTask.status = currentTask.aborted ? 'Cancelled' : 'Error'; log(`ERROR: ${e.message}`); }
+    if (currentTask) {
+      currentTask.status = currentTask.aborted ? 'Cancelled' : 'Error';
+      log(`ERROR: ${e.message}`);
+    }
     fs.unlink(pbfPath, () => {});
-    fs.unlink(tempMbtilesPath, () => {});
+    fs.unlink(tmpMbtilesPath, () => {});
     setTimeout(() => { currentTask = null; }, 20000);
   }
 });
@@ -508,9 +642,13 @@ async function start() {
   await Promise.all([
     provisionStyles().catch(e => console.error('Style provisioning failed:', e.message)),
     provisionFonts().catch(e => console.error('Font provisioning failed:', e.message)),
-    loadGeofabrikIndex().catch(e => console.error('Geofabrik index failed:', e.message)),
+    ...SOURCES.map(s => loadSourceIndex(s).catch(e => console.error(`${s.id} index load failed:`, e.message))),
   ]);
-  http.createServer(publicApp).listen(PUBLIC_PORT, () => console.log(`Public  server: http://0.0.0.0:${PUBLIC_PORT}`));
-  http.createServer(adminApp).listen(ADMIN_PORT,  () => console.log(`Admin   server: http://127.0.0.1:${ADMIN_PORT}`));
+  http.createServer(publicApp).listen(PUBLIC_PORT, () =>
+    console.log(`Public server : http://0.0.0.0:${PUBLIC_PORT}`)
+  );
+  http.createServer(adminApp).listen(ADMIN_PORT, () =>
+    console.log(`Admin  server : http://127.0.0.1:${ADMIN_PORT}`)
+  );
 }
 start();

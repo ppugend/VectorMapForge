@@ -1,28 +1,24 @@
 services:
   manager:
     image: oven/bun:alpine
-    container_name: osm_manager
+    container_name: vectormapforge
     working_dir: /app
     ports:
-      - "8080:3000"           # public: tiles, viewer (external)
-      - "127.0.0.1:8082:3001" # admin:  dashboard (localhost only)
+      - "8050:3000"           # public  : tiles, viewer (expose via reverse proxy)
+      - "127.0.0.1:8051:3001" # admin   : import/export, localhost only
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./manager:/app
       - osm_data:/osm_data
-      - osm_temp:/osm_temp
     environment:
       - DATA_DIR=/osm_data
       - TEMP_DIR=/osm_temp
-      - PLANETILER_JVM_MEMORY=${PLANETILER_JVM_MEMORY:-512m}
       - BUILD_DISABLED=true
-      # Set PUBLIC_URL if behind a reverse proxy, e.g.:
-      # PUBLIC_URL=https://tiles.example.com
+      - PLANETILER_JVM_MEMORY=${PLANETILER_JVM_MEMORY:-512m}
+      # Uncomment if serving behind a reverse proxy:
+      # - PUBLIC_URL=https://tiles.example.com
     command: sh -c "apk add --no-cache curl tar unzip && bun install && bun server.js"
     restart: unless-stopped
 
 volumes:
   osm_data:
     name: osm_persistent_data
-  osm_temp:
-    name: osm_build_temp

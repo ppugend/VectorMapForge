@@ -1,13 +1,13 @@
 services:
   manager:
     image: oven/bun:alpine
-    container_name: osm_manager
+    container_name: vectormapforge
     working_dir: /app
     ports:
-      - "8080:3000"           # public: tiles, viewer
-      - "127.0.0.1:8082:3001" # admin:  dashboard (localhost only)
+      - "8050:3000"           # public : tiles, viewer
+      - "127.0.0.1:8051:3001" # admin  : build manager (localhost only)
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock  # required for Planetiler builds
       - ./manager:/app
       - osm_data:/osm_data
       - osm_temp:/osm_temp
@@ -23,5 +23,3 @@ volumes:
     name: osm_persistent_data
   osm_temp:
     name: osm_build_temp
-  manager_modules:
-    name: osm_manager_modules
