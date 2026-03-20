@@ -111,19 +111,59 @@
             <button class="secondary" onclick="refreshSource()" id="refreshBtn" title="Re-fetch region list">↻ Refresh List</button>
         </div>
 
-        <div class="url-guide">
-            <strong>📖 Viewer URL format:</strong>
-            <code>/viewer.html?region=<em>region-id</em>&amp;lat=<em>lat</em>&amp;lng=<em>lng</em>&amp;zoom=<em>zoom</em></code>
-            &nbsp;—&nbsp;
-            <span style="color:#555">lat/lng/zoom optional — defaults to tile's built-in center. Roads visible at zoom: <strong>14–16</strong></span>
-            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:8px; font-size:12px;">
-                <span style="color:#888">Example (Geofabrik):</span>
-                <a href="/viewer.html?region=monaco&lat=43.7384&lng=7.4244&zoom=15" target="_blank" style="color:#007bff">/viewer.html?region=monaco&amp;lat=43.7384&amp;lng=7.4244&amp;zoom=15</a>
-                <span style="color:#bbb">|</span>
-                <span style="color:#888">Example (BBBike):</span>
-                <a href="/viewer.html?region=seoul&lat=37.504381&lng=127.051370&zoom=15" target="_blank" style="color:#007bff">/viewer.html?region=seoul&amp;lat=37.504381&amp;lng=127.051370&amp;zoom=15</a>
+        <details class="url-guide" style="padding:0;">
+            <summary style="cursor:pointer; padding:10px 14px; font-weight:bold; user-select:none; list-style:none; display:flex; align-items:center; gap:6px;">
+                <span>📖</span> Viewer URL Guide <span style="font-size:11px; color:#888; font-weight:normal;">(click to expand)</span>
+            </summary>
+            <div style="padding:10px 14px 14px; border-top:1px solid #dee2e6;">
+
+                <div style="margin-bottom:14px;">
+                    <strong style="font-size:13px;">Method 1 — lat/lng</strong>
+                    <div style="margin-top:4px; font-size:12px; color:#555;">
+                        <code>/viewer.html?lat=<em>lat</em>&amp;lng=<em>lng</em>&amp;zoom=<em>zoom</em></code>
+                        &nbsp;— no region needed. Roads visible at zoom <strong>14–16</strong>.
+                    </div>
+                    <div style="margin-top:8px; display:flex; flex-direction:column; gap:4px; font-size:12px;">
+                        <div>
+                            <span style="display:inline-block;width:60px;color:#888;">Seoul</span>
+                            <a href="/viewer.html?lat=37.504364&lng=127.051338&zoom=15" target="_blank" style="color:#007bff;">/viewer.html?lat=37.504364&amp;lng=127.051338&amp;zoom=15</a>
+                        </div>
+                        <div>
+                            <span style="display:inline-block;width:60px;color:#888;">Monaco</span>
+                            <a href="/viewer.html?lat=43.735800&lng=7.421300&zoom=15" target="_blank" style="color:#007bff;">/viewer.html?lat=43.735800&amp;lng=7.421300&amp;zoom=15</a>
+                        </div>
+                        <div>
+                            <span style="display:inline-block;width:60px;color:#888;">Bangkok</span>
+                            <a href="/viewer.html?lat=13.753620&lng=100.490060&zoom=15" target="_blank" style="color:#007bff;">/viewer.html?lat=13.753620&amp;lng=100.490060&amp;zoom=15</a>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <strong style="font-size:13px;">Method 2 — ZXY tile coordinate</strong>
+                    <div style="margin-top:4px; font-size:12px; color:#555;">
+                        <code>/viewer.html?z=<em>z</em>&amp;x=<em>x</em>&amp;y=<em>y</em></code>
+                        &nbsp;— centers on the tile. No region needed.
+                    </div>
+                    <div style="margin-top:8px; display:flex; flex-direction:column; gap:4px; font-size:12px;">
+                        <div>
+                            <span style="display:inline-block;width:60px;color:#888;">Seoul</span>
+                            <a href="/viewer.html?z=15&x=27948&y=12696" target="_blank" style="color:#007bff;">/viewer.html?z=15&amp;x=27948&amp;y=12696</a>
+                            <span style="color:#bbb; margin-left:4px;">(선릉역)</span>
+                        </div>
+                        <div>
+                            <span style="display:inline-block;width:60px;color:#888;">Monaco</span>
+                            <a href="/viewer.html?z=15&x=17059&y=11948" target="_blank" style="color:#007bff;">/viewer.html?z=15&amp;x=17059&amp;y=11948</a>
+                        </div>
+                        <div>
+                            <span style="display:inline-block;width:60px;color:#888;">Bangkok</span>
+                            <a href="/viewer.html?z=15&x=25530&y=15119" target="_blank" style="color:#007bff;">/viewer.html?z=15&amp;x=25530&amp;y=15119</a>
+                        </div>
+                    </div>
+                </div>
+
             </div>
-        </div>
+        </details>
 
         <details id="mapsAccordion" style="margin-bottom:10px;">
             <summary id="mapsAccordionSummary" style="cursor:pointer; padding:8px 10px; background:#f0f0f0; border-radius:4px; font-weight:bold; user-select:none;">🗺️ Downloaded Maps (0)</summary>
@@ -309,18 +349,41 @@
             }));
         }
 
+        // viewer.html accepts: ?lat=&lng=&zoom= OR ?z=&x=&y= (region optional, defaults to global)
+        function latLngToTile(lat, lng, zoom) {
+            const z = zoom;
+            const x = Math.floor((lng + 180) / 360 * Math.pow(2, z));
+            const y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, z));
+            return { z, x, y };
+        }
+
         function viewerHref(regionId, fallbackCenter) {
             const c = tileCenters[regionId] || (fallbackCenter ? { lng: fallbackCenter[0], lat: fallbackCenter[1] } : null);
-            let href = `/viewer.html?region=${regionId}`;
-            if (c) href += `&lat=${c.lat.toFixed(6)}&lng=${c.lng.toFixed(6)}&zoom=15`;
+            let href = `/viewer.html`;
+            if (c) href += `?lat=${c.lat.toFixed(6)}&lng=${c.lng.toFixed(6)}&zoom=15`;
             return href;
+        }
+
+        function viewerZxyHref(regionId, fallbackCenter) {
+            const c = tileCenters[regionId] || (fallbackCenter ? { lng: fallbackCenter[0], lat: fallbackCenter[1] } : null);
+            if (!c) return `/viewer.html`;
+            const { z, x, y } = latLngToTile(c.lat, c.lng, 15);
+            return `/viewer.html?z=${z}&x=${x}&y=${y}`;
         }
 
         function publicViewerHref(regionId, fallbackCenter) {
             const c = tileCenters[regionId] || (fallbackCenter ? { lng: fallbackCenter[0], lat: fallbackCenter[1] } : null);
-            let href = `${location.protocol}//${location.hostname}:8050/viewer.html?region=${regionId}`;
-            if (c) href += `&lat=${c.lat.toFixed(6)}&lng=${c.lng.toFixed(6)}&zoom=15`;
+            let href = `${location.protocol}//${location.hostname}:8050/viewer.html`;
+            if (c) href += `?lat=${c.lat.toFixed(6)}&lng=${c.lng.toFixed(6)}&zoom=15`;
             return href;
+        }
+
+        function publicViewerZxyHref(regionId, fallbackCenter) {
+            const c = tileCenters[regionId] || (fallbackCenter ? { lng: fallbackCenter[0], lat: fallbackCenter[1] } : null);
+            const base = `${location.protocol}//${location.hostname}:8050/viewer.html`;
+            if (!c) return base;
+            const { z, x, y } = latLngToTile(c.lat, c.lng, 15);
+            return `${base}?z=${z}&x=${x}&y=${y}`;
         }
 
         async function fetchRegions() {
@@ -379,7 +442,7 @@
                     ? ` <small style="color:#888">(${r.mbtilesSize ? fmtSize(r.mbtilesSize) : '?'}${r.pbfBytes ? ' · PBF ' + fmtSize(r.pbfBytes) : ''})</small>` : '';
 
                 const viewerLink = r.hasMbtiles
-                    ? `<a class="map-link" href="${viewerHref(r.id, r.center)}" target="_blank">🗺️ View</a><a class="map-link" href="${publicViewerHref(r.id, r.center)}" target="_blank" title="Open on public port (8050)">🌐 Public</a>` : '';
+                    ? `<a class="map-link" href="${viewerHref(r.id, r.center)}" target="_blank">🗺️ lat/lng</a><a class="map-link" href="${viewerZxyHref(r.id, r.center)}" target="_blank">🗺️ zxy</a><a class="map-link" href="${publicViewerHref(r.id, r.center)}" target="_blank">🌐 lat/lng</a><a class="map-link" href="${publicViewerZxyHref(r.id, r.center)}" target="_blank">🌐 zxy</a>` : '';
 
                 const escapedName = r.name.replace(/'/g, "\\'");
                 const tr = document.createElement('tr');
@@ -440,9 +503,12 @@
                 const coordStr = c ? `lat=${c.lat.toFixed(6)}, lng=${c.lng.toFixed(6)}, zoom=15` : 'Coords: TileJSON center';
                 const sizes = [r.mbtilesSize ? fmtSize(r.mbtilesSize) : null, r.pbfBytes ? 'PBF ' + fmtSize(r.pbfBytes) : null].filter(Boolean).join(' · ');
                 return `<div class="map-card">
-                    <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
-                        <a href="${viewerHref(r.id, r.center)}" target="_blank">🗺️ ${r.name}</a>
-                        <a href="${publicViewerHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888" title="Open on public port (8050)">🌐 Public URL</a>
+                    <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+                        <strong>${r.name}</strong>
+                        <a href="${viewerHref(r.id, r.center)}" target="_blank" style="font-size:12px">🗺️ lat/lng</a>
+                        <a href="${viewerZxyHref(r.id, r.center)}" target="_blank" style="font-size:12px">🗺️ zxy</a>
+                        <a href="${publicViewerHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888">🌐 lat/lng</a>
+                        <a href="${publicViewerZxyHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888">🌐 zxy</a>
                     </div>
                     <small>${r.id}${sizes ? ' · ' + sizes : ''}</small>
                     <small style="color:#777">${coordStr}</small>

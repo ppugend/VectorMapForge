@@ -7,6 +7,7 @@ const https = require('https');
 const AdmZip = require('adm-zip');
 const multer = require('multer');
 const { Database } = require('bun:sqlite');
+const { gunzipSync, gzipSync } = require('zlib');
 
 const PUBLIC_PORT    = parseInt(process.env.PUBLIC_PORT || '3000');
 const ADMIN_PORT     = parseInt(process.env.ADMIN_PORT  || '3001');
@@ -303,6 +304,66 @@ publicApp.get('/favicon.svg',  (req, res) => res.sendFile(path.join(__dirname, '
 publicApp.get('/viewer.html',  (req, res) => res.sendFile(path.join(__dirname, 'public/viewer.html')));
 publicApp.use('/sprites', express.static(path.join(__dirname, 'public/sprites')));
 
+// Global merged tile endpoint — queries all loaded MBTiles in sequence, returns first match.
+// Enables seamless cross-region maps without per-region style switching.
+publicApp.get('/data/global.json', (req, res) => {
+  const origin = getPublicOrigin(req);
+  res.json({
+    tilejson: '3.0.0',
+    id: 'global',
+    name: 'Global (all regions merged)',
+    tiles: [`${origin}/data/global/{z}/{x}/{y}.pbf`],
+    minzoom: 0,
+    maxzoom: 14,
+    format: 'pbf',
+    bounds: [-180, -85, 180, 85],
+    center: [0, 0, 2],
+    attribution: '© OpenStreetMap contributors',
+  });
+});
+
+publicApp.get('/data/global/:z/:x/:y.pbf', (req, res) => {
+  const { z, x, y } = req.params;
+  let zi = parseInt(z), xi = parseInt(x), yi = parseInt(y);
+  if (zi > 14) { const s = zi - 14; xi >>= s; yi >>= s; zi = 14; }
+  const tmsY = (1 << zi) - 1 - yi;
+  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
+  if (!fs.existsSync(mbtilesDir)) return res.status(204).end();
+  const regionIds = fs.readdirSync(mbtilesDir)
+    .filter(f => f.endsWith('.mbtiles'))
+    .map(f => f.replace('.mbtiles', ''));
+
+  // Collect raw gzipped tile data from every mbtiles that has this tile
+  const tileBuffers = [];
+  for (const id of regionIds) {
+    const mdb = getMbtilesDb(id);
+    if (!mdb) continue;
+    try {
+      const row = mdb.query('SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?').get(zi, xi, tmsY);
+      if (row) tileBuffers.push(Buffer.from(row.tile_data));
+    } catch (e) { /* skip broken mbtiles */ }
+  }
+
+  if (tileBuffers.length === 0) return res.status(204).end();
+
+  res.set('Content-Type', 'application/x-protobuf');
+  res.set('Content-Encoding', 'gzip');
+  res.set('Cache-Control', 'public, max-age=86400');
+
+  if (tileBuffers.length === 1) return res.send(tileBuffers[0]);
+
+  // Merge: protobuf vector tile = repeated Layer messages.
+  // Concatenating the raw decoded bytes of multiple tiles produces a valid merged tile
+  // because protobuf repeated fields are wire-compatible when concatenated.
+  try {
+    const rawBuffers = tileBuffers.map(buf => gunzipSync(buf));
+    return res.send(gzipSync(Buffer.concat(rawBuffers)));
+  } catch (e) {
+    // Fallback: return first tile if merge fails
+    return res.send(tileBuffers[0]);
+  }
+});
+
 publicApp.get('/data/:id.json', (req, res) => {
   const mdb = getMbtilesDb(req.params.id);
   if (!mdb) return res.status(404).json({ error: 'Region not found' });
@@ -331,7 +392,8 @@ publicApp.get('/data/:id/:z/:x/:y.pbf', (req, res) => {
   const mdb = getMbtilesDb(id);
   if (!mdb) return res.status(404).send('Region not found');
   try {
-    const zi = parseInt(z), xi = parseInt(x), yi = parseInt(y);
+    let zi = parseInt(z), xi = parseInt(x), yi = parseInt(y);
+    if (zi > 14) { const s = zi - 14; xi >>= s; yi >>= s; zi = 14; }
     const tmsY = (1 << zi) - 1 - yi;
     const row = mdb.query('SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?').get(zi, xi, tmsY);
     if (!row) return res.status(204).end();
@@ -544,6 +606,7 @@ adminApp.post('/api/import', upload.single('file'), (req, res) => {
       db.regions[id] = importDb.regions[id];
       generateRegionStyle(id);
     }
+    generateRegionStyle('global'); // regenerate merged style with all regions
     saveDb();
     res.json({ ok: true, imported: Object.keys(importDb.regions) });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -626,6 +689,7 @@ adminApp.post('/api/update', async (req, res) => {
     };
     saveDb();
     generateRegionStyle(region.id);
+    generateRegionStyle('global'); // regenerate merged style with all regions
 
     currentTask.status = 'Completed';
     log('--- DONE ---');
@@ -649,6 +713,7 @@ async function start() {
     provisionFonts().catch(e => console.error('Font provisioning failed:', e.message)),
     ...SOURCES.map(s => loadSourceIndex(s).catch(e => console.error(`${s.id} index load failed:`, e.message))),
   ]);
+  generateRegionStyle('global'); // build merged global style from all available MBTiles
   http.createServer(publicApp).listen(PUBLIC_PORT, () =>
     console.log(`Public server : http://0.0.0.0:${PUBLIC_PORT}`)
   );

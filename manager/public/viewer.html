@@ -19,9 +19,10 @@
     <div id="map"></div>
     <script type="module">
         const p = new URLSearchParams(window.location.search);
-        const region = p.get('region') || 'south-korea';
+        // region is optional — defaults to 'global' (merged multi-region style)
+        const region = p.get('region') || 'global';
 
-        const styleUrl = `${window.location.origin}/styles/${region}-pretty/style.json`;
+        const styleUrl = `${window.location.origin}/styles/${region}/style.json`;
 
         // Style endpoint rewrites all URLs (mbtiles://, sprite, glyphs) server-side
         const styleRes = await fetch(styleUrl);
@@ -37,9 +38,25 @@
             }
         } catch (_) {}
 
-        const lng = parseFloat(p.get('lng') ?? p.get('lon')) || defaultLng;
-        const lat = parseFloat(p.get('lat')) || defaultLat;
-        const zoom = parseFloat(p.get('zoom')) || defaultZoom;
+        // ZXY tile coordinate → center lat/lng (tile center point)
+        function zxyToLatLng(z, x, y) {
+            const n = Math.PI - 2 * Math.PI * (y + 0.5) / Math.pow(2, z);
+            return {
+                lat: 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))),
+                lng: (x + 0.5) / Math.pow(2, z) * 360 - 180,
+            };
+        }
+
+        let lng, lat, zoom;
+        const pz = parseInt(p.get('z')), px = parseInt(p.get('x')), py = parseInt(p.get('y'));
+        if (!isNaN(pz) && !isNaN(px) && !isNaN(py)) {
+            const c = zxyToLatLng(pz, px, py);
+            lat = c.lat; lng = c.lng; zoom = pz;
+        } else {
+            lng = parseFloat(p.get('lng') ?? p.get('lon')) || defaultLng;
+            lat = parseFloat(p.get('lat')) || defaultLat;
+            zoom = parseFloat(p.get('zoom')) || defaultZoom;
+        }
 
         window._map = new maplibregl.Map({
             container: 'map',
