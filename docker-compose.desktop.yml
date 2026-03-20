@@ -14,7 +14,6 @@ services:
     environment:
       - DATA_DIR=/osm_data
       - TEMP_DIR=/osm_temp
-      - PLANETILER_JVM_MEMORY=${PLANETILER_JVM_MEMORY:-6g}
     command: sh -c "apk add --no-cache docker-cli curl tar unzip && bun install && bun server.js"
     restart: unless-stopped
 

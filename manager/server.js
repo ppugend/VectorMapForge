@@ -570,7 +570,7 @@ adminApp.post('/api/update', async (req, res) => {
   const pbfPath        = path.join(DATA_DIR, 'pbf', `${region.id}.osm.pbf`);
   const mbtilesPath    = path.join(DATA_DIR, 'mbtiles', `${region.id}.mbtiles`);
   const tmpMbtilesPath = path.join(DATA_DIR, 'mbtiles', `${region.id}_temp.mbtiles`);
-  const jvmMemory      = process.env.PLANETILER_JVM_MEMORY || '6g';
+  const jvmMemory = process.env.PLANETILER_JVM_MEMORY || '';
 
   currentTask = { title: `Build · ${region.name}`, region: region.name, regionId: region.id, status: 'Starting...', logs: '', aborted: false };
   const log = m => { if (currentTask) currentTask.logs += m + '\n'; };
@@ -589,10 +589,15 @@ adminApp.post('/api/update', async (req, res) => {
     // MD5 always checked against canonical source
     const remoteMd5 = await source.getMd5(region.url).catch(() => null);
 
+    if (!fs.existsSync(pbfPath)) {
+      throw new Error(`PBF file not found at ${pbfPath} — download may have failed silently`);
+    }
+
     currentTask.status = 'Building vectors...';
+    const jvmEnv = jvmMemory ? [`-e`, `JAVA_TOOL_OPTIONS=-Xmx${jvmMemory}`] : [];
     await runCommand('docker', [
       'run', '--rm',
-      '-e', `JAVA_TOOL_OPTIONS=-Xmx${jvmMemory}`,
+      ...jvmEnv,
       '-v', `osm_persistent_data:${DATA_DIR}`,
       '-v', `osm_build_temp:${TEMP_DIR}`,
       'ghcr.io/onthegomap/planetiler:latest',
