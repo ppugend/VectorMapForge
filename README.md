@@ -26,8 +26,25 @@ Server   →  Import ZIP    →  Serve vector tiles + map viewer
 - **Build manager** — download PBF, run Planetiler, monitor progress via live log stream
 - **Export / Import** — ZIP bundles for moving built tiles from desktop to server
 - **Update checker** — MD5-based remote change detection
-- **MapLibre-ready** — auto-generated style JSON with sprite, font, and tile URL rewriting
+- **Seamless global tiles** — all loaded regions served as a single merged PBF tile stream; no region switching needed
+- **MapLibre-ready** — auto-generated style JSON per region and globally; sprite, font, and tile URL rewriting included
 - **Reverse proxy friendly** — `PUBLIC_URL` env var for correct TileJSON and style URLs
+
+---
+
+## Vector Tiles vs Raster Tiles
+
+VectorMapForge serves **PBF vector tiles only** — it does not serve PNG raster tiles.
+
+| | OSM Official | VectorMapForge |
+|---|---|---|
+| **Tile format** | PNG (pre-rendered raster image) | PBF — Protocol Buffers (raw geodata) |
+| **Tile URL pattern** | `…/tile.openstreetmap.org/{z}/{x}/{y}.png` | `HOST:8050/data/global/{z}/{x}/{y}.pbf` |
+| **Rendering** | Server-side — client receives a finished image | Client-side — MapLibre GL JS renders on device via WebGL |
+| **Style control** | None — style is baked into the image | Full control via style JSON (colors, fonts, layer visibility) |
+| **Data content** | Pixels | Roads, buildings, boundaries, labels as geometry |
+
+Both use the **ZXY coordinate system** for tile requests. The map center is set with lat/lng — MapLibre computes the required ZXY tiles from the current viewport internally.
 
 ---
 
@@ -68,22 +85,43 @@ Build is disabled on the server. Import tile ZIPs exported from the desktop.
 |---------|-----|
 | **Server dashboard** | `http://HOST:8050/tiles.html` |
 | **Forge (build manager)** | `http://localhost:8051/` — localhost only |
-| **Map viewer** | `http://HOST:8050/viewer.html?region=REGION_ID` |
-| **TileJSON** | `http://HOST:8050/data/REGION_ID.json` |
-| **Vector tile** | `http://HOST:8050/data/REGION_ID/{z}/{x}/{y}.pbf` |
-| **MapLibre style** | `http://HOST:8050/styles/REGION_ID/style.json` |
+| **Map viewer** | `http://HOST:8050/viewer.html` |
+| **Global TileJSON** | `http://HOST:8050/data/global.json` |
+| **Global merged tile** | `http://HOST:8050/data/global/{z}/{x}/{y}.pbf` |
+| **Global MapLibre style** | `http://HOST:8050/styles/global/style.json` |
+| **Per-region TileJSON** | `http://HOST:8050/data/REGION_ID.json` |
+| **Per-region tile** | `http://HOST:8050/data/REGION_ID/{z}/{x}/{y}.pbf` |
+| **Per-region style** | `http://HOST:8050/styles/REGION_ID/style.json` |
 
 ### Viewer URL parameters
 
+The viewer defaults to the `global` style (all regions merged). No `region` parameter is needed.
+Roads are visible at zoom **14–16**.
+
+**Method 1 — lat/lng**
+
 ```
-/viewer.html?region=REGION_ID&lat=LAT&lng=LNG&zoom=ZOOM
+/viewer.html?lat=LAT&lng=LNG&zoom=ZOOM
 ```
 
-`lat`, `lng`, `zoom` are optional — defaults to the tile's built-in center. Roads are visible at zoom **14–16**.
+```
+/viewer.html?lat=37.504364&lng=127.051338&zoom=15   # Seoul (Seolleung Station)
+/viewer.html?lat=43.735800&lng=7.421300&zoom=15     # Monaco
+/viewer.html?lat=13.753620&lng=100.490060&zoom=15   # Bangkok
+```
+
+**Method 2 — ZXY tile coordinate**
 
 ```
-/viewer.html?region=monaco&lat=43.7384&lng=7.4244&zoom=15
-/viewer.html?region=seoul&lat=37.504381&lng=127.051370&zoom=15
+/viewer.html?z=Z&x=X&y=Y
+```
+
+Centers the map on the given tile. Useful when linking directly from tile inspection tools.
+
+```
+/viewer.html?z=15&x=27948&y=12696   # Seoul (Seolleung Station)
+/viewer.html?z=15&x=17059&y=11948   # Monaco
+/viewer.html?z=15&x=25530&y=15119   # Bangkok
 ```
 
 ---
@@ -149,17 +187,10 @@ curl http://localhost:8050/data/south-korea.json
 
 ## Docker Compose Files
 
-| File | Use case |
-|------|----------|
-| `docker-compose.desktop.yml` | Local desktop — build + serve |
-| `docker-compose.server.yml` | Remote server — serve only |
-
-| Setting | desktop | server |
-|---------|---------|--------|
-| `BUILD_DISABLED` | unset (builds enabled) | `true` |
-| `docker.sock` mount | ✅ required for Planetiler | ❌ |
-| `osm_temp` volume | ✅ build scratch space | ❌ |
-| `PLANETILER_JVM_MEMORY` | `6g` | `512m` |
+| File | Use case | `BUILD_DISABLED` | `docker.sock` | `osm_temp` volume |
+|------|----------|-----------------|---------------|-------------------|
+| `docker-compose.desktop.yml` | Local desktop — build + serve | unset | ✅ required | ✅ required |
+| `docker-compose.server.yml` | Remote server — serve only | `true` | ❌ | ❌ |
 
 ---
 
@@ -205,7 +236,7 @@ These files rarely change. If you need to force a refresh (e.g. after a major Pl
 | `TEMP_DIR` | `/osm_temp` | Planetiler build scratch space |
 | `BUILD_DISABLED` | `false` | Set `true` to disable build API (403) |
 | `PUBLIC_URL` | *(none)* | External base URL for reverse proxy |
-| `PLANETILER_JVM_MEMORY` | `6g` (desktop) / `512m` (server) | JVM heap for Planetiler |
+| `PLANETILER_JVM_MEMORY` | *(none)* | JVM heap for Planetiler (e.g. `6g`). If unset, no `-Xmx` flag is passed and the JVM uses its own default. |
 | `PUBLIC_PORT` | `3000` | Internal public port |
 | `ADMIN_PORT` | `3001` | Internal admin port |
 
@@ -240,17 +271,24 @@ Do **not** proxy port `8051` — it is admin-only and should remain localhost on
 ## MapLibre Integration
 
 ```javascript
+// Global style — all loaded regions merged seamlessly
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.example.com/styles/global/style.json',
+});
+
+// Per-region style
 const map = new maplibregl.Map({
   container: 'map',
   style: 'https://tiles.example.com/styles/south-korea/style.json',
 });
 ```
 
-Or with Leaflet + leaflet-maplibre-gl:
+With Leaflet + leaflet-maplibre-gl:
 
 ```javascript
 L.maplibreGL({
-  style: 'https://tiles.example.com/styles/south-korea/style.json',
+  style: 'https://tiles.example.com/styles/global/style.json',
 }).addTo(map);
 ```
 
