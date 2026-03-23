@@ -590,17 +590,19 @@ adminApp.post('/api/export', (req, res) => {
   res.send(zip.toBuffer());
 });
 
-adminApp.post('/api/import-files', upload.fields([{ name: 'dbJson', maxCount: 1 }, { name: 'mbtiles', maxCount: 1 }]), (req, res) => {
-  const dbFile      = req.files?.dbJson?.[0];
-  const mbtilesFile = req.files?.mbtiles?.[0];
+adminApp.post('/api/import-files', upload.fields([{ name: 'dbJson', maxCount: 1 }, { name: 'mbtiles', maxCount: 50 }]), (req, res) => {
+  const dbFile       = req.files?.dbJson?.[0];
+  const mbtilesFiles = req.files?.mbtiles || [];
   try {
-    if (!dbFile)      throw new Error('db.json file is required');
-    if (!mbtilesFile) throw new Error('.mbtiles file is required');
-    const importDb   = JSON.parse(fs.readFileSync(dbFile.path, 'utf8'));
-    const regionId   = mbtilesFile.originalname.replace(/\.mbtiles$/, '');
-    const destPath   = path.join(DATA_DIR, 'mbtiles', `${regionId}.mbtiles`);
-    closeMbtilesDb(regionId);
-    fs.copyFileSync(mbtilesFile.path, destPath);
+    if (!dbFile)            throw new Error('db.json file is required');
+    if (!mbtilesFiles.length) throw new Error('At least one .mbtiles file is required');
+    const importDb = JSON.parse(fs.readFileSync(dbFile.path, 'utf8'));
+    for (const mbtilesFile of mbtilesFiles) {
+      const regionId = mbtilesFile.originalname.replace(/\.mbtiles$/, '');
+      const destPath = path.join(DATA_DIR, 'mbtiles', `${regionId}.mbtiles`);
+      closeMbtilesDb(regionId);
+      fs.copyFileSync(mbtilesFile.path, destPath);
+    }
     for (const id in importDb.regions) {
       db.regions[id] = importDb.regions[id];
       generateRegionStyle(id);
@@ -610,8 +612,8 @@ adminApp.post('/api/import-files', upload.fields([{ name: 'dbJson', maxCount: 1 
     res.json({ ok: true, imported: Object.keys(importDb.regions) });
   } catch (e) { res.status(500).json({ error: e.message }); }
   finally {
-    if (dbFile)                         fs.unlink(dbFile.path, () => {});
-    if (mbtilesFile?.path && fs.existsSync(mbtilesFile.path)) fs.unlink(mbtilesFile.path, () => {});
+    if (dbFile) fs.unlink(dbFile.path, () => {});
+    for (const f of mbtilesFiles) fs.unlink(f.path, () => {});
   }
 });
 
