@@ -386,6 +386,14 @@
             return `${base}?z=${z}&x=${x}&y=${y}`;
         }
 
+        function publicTileHref(regionId, fallbackCenter) {
+            const c = tileCenters[regionId] || (fallbackCenter ? { lng: fallbackCenter[0], lat: fallbackCenter[1] } : null);
+            const base = `${location.protocol}//${location.hostname}:8050/data/global`;
+            if (!c) return base + '/0/0/0.pbf';
+            const { z, x, y } = latLngToTile(c.lat, c.lng, 15);
+            return `${base}/${z}/${x}/${y}.pbf`;
+        }
+
         async function fetchRegions() {
             const res = await fetch(`/api/regions?source=${currentSource}`, { cache: 'no-store' });
             allRegions = await res.json();
@@ -442,7 +450,12 @@
                     ? ` <small style="color:#888">(${r.mbtilesSize ? fmtSize(r.mbtilesSize) : '?'}${r.pbfBytes ? ' · PBF ' + fmtSize(r.pbfBytes) : ''})</small>` : '';
 
                 const viewerLink = r.hasMbtiles
-                    ? `<a class="map-link" href="${viewerHref(r.id, r.center)}" target="_blank">🗺️ lat/lng</a><a class="map-link" href="${viewerZxyHref(r.id, r.center)}" target="_blank">🗺️ zxy</a><a class="map-link" href="${publicViewerHref(r.id, r.center)}" target="_blank">🌐 lat/lng</a><a class="map-link" href="${publicViewerZxyHref(r.id, r.center)}" target="_blank">🌐 zxy</a>` : '';
+                    ? `<a class="map-link" href="${viewerHref(r.id, r.center)}" target="_blank" title="Admin viewer — lat/lng">🗺️ admin lat/lng</a>`
+                    + `<a class="map-link" href="${viewerZxyHref(r.id, r.center)}" target="_blank" title="Admin viewer — zxy">🗺️ admin zxy</a>`
+                    + `<a class="map-link" href="${publicViewerHref(r.id, r.center)}" target="_blank" title="Public port (8050) viewer — lat/lng">🌐 public lat/lng</a>`
+                    + `<a class="map-link" href="${publicViewerZxyHref(r.id, r.center)}" target="_blank" title="Public port (8050) viewer — zxy">🌐 public zxy</a>`
+                    + `<a class="map-link" href="${publicTileHref(r.id, r.center)}" target="_blank" title="Public tile download — .pbf">🌐 public tile</a>`
+                    : '';
 
                 const escapedName = r.name.replace(/'/g, "\\'");
                 const tr = document.createElement('tr');
@@ -505,10 +518,11 @@
                 return `<div class="map-card">
                     <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
                         <strong>${r.name}</strong>
-                        <a href="${viewerHref(r.id, r.center)}" target="_blank" style="font-size:12px">🗺️ lat/lng</a>
-                        <a href="${viewerZxyHref(r.id, r.center)}" target="_blank" style="font-size:12px">🗺️ zxy</a>
-                        <a href="${publicViewerHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888">🌐 lat/lng</a>
-                        <a href="${publicViewerZxyHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888">🌐 zxy</a>
+                        <a href="${viewerHref(r.id, r.center)}" target="_blank" style="font-size:12px" title="Admin viewer — lat/lng">🗺️ admin lat/lng</a>
+                        <a href="${viewerZxyHref(r.id, r.center)}" target="_blank" style="font-size:12px" title="Admin viewer — zxy">🗺️ admin zxy</a>
+                        <a href="${publicViewerHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888" title="Public port (8050) viewer — lat/lng">🌐 public lat/lng</a>
+                        <a href="${publicViewerZxyHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888" title="Public port (8050) viewer — zxy">🌐 public zxy</a>
+                        <a href="${publicTileHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888" title="Public tile download — .pbf">🌐 public tile</a>
                     </div>
                     <small>${r.id}${sizes ? ' · ' + sizes : ''}</small>
                     <small style="color:#777">${coordStr}</small>
