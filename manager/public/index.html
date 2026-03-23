@@ -51,7 +51,19 @@
         .pagination { display: flex; gap: 8px; align-items: center; margin-top: 15px; justify-content: center; flex-wrap: wrap; }
         .pagination button { padding: 5px 14px; font-size: 13px; }
         .pagination span { font-size: 13px; color: #555; }
-        .import-section { border: 1px dashed #ccc; padding: 10px; border-radius: 4px; background: #fff; display: flex; align-items: center; gap: 10px; }
+        .import-accordion { border: 1px dashed #ccc; border-radius: 4px; background: #fff; width: 100%; }
+        .import-accordion > summary { cursor: pointer; padding: 8px 12px; font-weight: bold; user-select: none; list-style: none; display: flex; align-items: center; gap: 6px; font-size: 13px; }
+        .import-accordion > summary::-webkit-details-marker { display: none; }
+        .import-tabs { display: flex; border-top: 1px dashed #ddd; border-bottom: 1px solid #eee; }
+        .import-tab { flex: 1; background: #f8f8f8; color: #666; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 7px 12px; font-size: 12px; font-weight: bold; cursor: pointer; }
+        .import-tab:hover { background: #eee; color: #333; }
+        .import-tab.active { background: #fff; color: #007bff; border-bottom: 2px solid #007bff; }
+        .import-panel { padding: 10px 14px; }
+        .import-warn { font-size: 11px; color: #a05000; background: #fff8e1; border: 1px solid #ffe082; border-radius: 3px; padding: 5px 8px; margin-bottom: 8px; }
+        .upload-progress-wrap { margin-top: 6px; }
+        .upload-progress-track { background: #e0e0e0; border-radius: 3px; overflow: hidden; height: 5px; }
+        .upload-progress-fill { background: #28a745; height: 100%; width: 0%; transition: width 0.15s; }
+        .upload-progress-text { font-size: 11px; color: #666; margin-top: 3px; }
         .map-link { color: #28a745 !important; font-weight: bold; }
         .url-guide { background:#f8f9fa; border:1px solid #dee2e6; border-radius:4px; padding:10px 14px; margin-bottom:10px; font-size:13px; }
         .url-guide code { background:#e9ecef; padding:2px 6px; border-radius:3px; font-size:12px; }
@@ -81,11 +93,43 @@
         </div>
 
         <div class="links">
-            <div class="import-section">
-                <strong>Import ZIP:</strong>
-                <input type="file" id="importFile" accept=".zip">
-                <button onclick="importZip()">Upload &amp; Import</button>
-            </div>
+            <details class="import-accordion" id="importAccordion">
+                <summary>⬆ Import ▸</summary>
+                <div class="import-tabs">
+                    <button class="import-tab active" id="tabBtnZip"   onclick="switchImportTab('zip')">Method 1 — ZIP</button>
+                    <button class="import-tab"        id="tabBtnFiles" onclick="switchImportTab('files')">Method 2 — Individual Files</button>
+                </div>
+                <div id="importPanelZip" class="import-panel">
+                    <div class="import-warn">⚠ On a low-spec server (1 CPU / 1 GB RAM), uploading a large ZIP (e.g. 350 MB) will cause the server to become extremely slow or unresponsive while the file is being extracted in memory. Use Method 2 to avoid this.</div>
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <input type="file" id="importFileZip" accept=".zip">
+                        <button onclick="importZip()">⬆ Upload &amp; Import</button>
+                    </div>
+                    <div class="upload-progress-wrap" id="progressWrapZip" style="display:none;">
+                        <div class="upload-progress-track"><div class="upload-progress-fill" id="progressFillZip"></div></div>
+                        <div class="upload-progress-text" id="progressTextZip"></div>
+                    </div>
+                </div>
+                <div id="importPanelFiles" class="import-panel" style="display:none;">
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <span style="width:64px; font-size:12px; color:#555; flex-shrink:0;">db.json</span>
+                            <input type="file" id="importFileDb" accept=".json">
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <span style="width:64px; font-size:12px; color:#555; flex-shrink:0;">.mbtiles</span>
+                            <input type="file" id="importFileMbtiles" accept=".mbtiles">
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <button onclick="importFiles()">⬆ Upload &amp; Import</button>
+                        </div>
+                        <div class="upload-progress-wrap" id="progressWrapFiles" style="display:none;">
+                            <div class="upload-progress-track"><div class="upload-progress-fill" id="progressFillFiles"></div></div>
+                            <div class="upload-progress-text" id="progressTextFiles"></div>
+                        </div>
+                    </div>
+                </div>
+            </details>
             <button class="export" onclick="exportSelected()" id="exportBtn">Export Selected (.zip)</button>
             <button class="secondary" id="clearCacheBtn" onclick="clearBuildCache()" style="background:#fff3e0;border:1px solid #ffb74d;color:#e65100" title="Delete lake centerline, water polygons, Natural Earth cache — will re-download on next build">🗑 Clear Build Cache</button>
         </div>
@@ -203,6 +247,12 @@
                 <button class="cancel" id="cancelBtn" onclick="cancelTask()">⛔ Cancel Task</button>
                 <button id="closeBarBtn" onclick="hideStatus()" style="background:#555;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:14px;">✕</button>
             </div>
+        </div>
+        <div id="statusUploadProgress" style="display:none; padding: 0 0 8px;">
+            <div style="background:#444; border-radius:3px; overflow:hidden; height:6px;">
+                <div id="statusUploadFill" style="background:#4caf50; height:100%; width:0%; transition:width 0.15s;"></div>
+            </div>
+            <div id="statusUploadText" style="font-size:11px; color:#aaa; margin-top:3px;"></div>
         </div>
         <pre id="taskLogs"></pre>
     </div>
@@ -605,9 +655,88 @@
             } catch (err) { alert(err.message); }
         }
 
+        function switchImportTab(tab) {
+            document.getElementById('importPanelZip').style.display   = tab === 'zip'   ? '' : 'none';
+            document.getElementById('importPanelFiles').style.display = tab === 'files' ? '' : 'none';
+            document.getElementById('tabBtnZip').classList.toggle('active',   tab === 'zip');
+            document.getElementById('tabBtnFiles').classList.toggle('active', tab === 'files');
+        }
+
+        let activeImportXhr = null;
+
         async function cancelTask() {
+            if (activeImportXhr) {
+                activeImportXhr.abort();
+                return;
+            }
             if (!confirm('Cancel the current task?')) return;
             await fetch('/api/cancel', { method: 'POST' });
+        }
+
+        function doImportXhr(url, formData, title, progressWrapId, progressFillId, progressTextId, onDone) {
+            showStatus(title, 'Uploading...');
+            document.getElementById('cancelBtn').style.display = '';
+            document.getElementById('statusUploadProgress').style.display = '';
+            document.getElementById('statusUploadFill').style.width = '0%';
+            document.getElementById('statusUploadText').textContent = '';
+            if (progressWrapId) document.getElementById(progressWrapId).style.display = '';
+
+            const xhr = new XMLHttpRequest();
+            activeImportXhr = xhr;
+
+            xhr.upload.onprogress = (e) => {
+                if (!e.lengthComputable) return;
+                const pct = Math.round(e.loaded / e.total * 100);
+                const loaded = (e.loaded / 1048576).toFixed(1);
+                const total  = (e.total  / 1048576).toFixed(1);
+                document.getElementById('statusUploadFill').style.width = pct + '%';
+                document.getElementById('statusUploadText').textContent = `${loaded} MB / ${total} MB`;
+                document.getElementById('taskState').innerText = `Uploading... ${pct}%`;
+                if (progressFillId) document.getElementById(progressFillId).style.width = pct + '%';
+                if (progressTextId) document.getElementById(progressTextId).textContent = `${loaded} MB / ${total} MB`;
+            };
+
+            xhr.upload.onload = () => {
+                document.getElementById('statusUploadProgress').style.display = 'none';
+                if (progressWrapId) document.getElementById(progressWrapId).style.display = 'none';
+                document.getElementById('taskState').innerText = 'Server processing...';
+                localLog('Upload complete. Server is writing files — please wait...');
+            };
+
+            const finish = (success, msg) => {
+                activeImportXhr = null;
+                document.getElementById('statusUploadProgress').style.display = 'none';
+                if (progressWrapId) document.getElementById(progressWrapId).style.display = 'none';
+                document.getElementById('cancelBtn').style.display = 'none';
+                document.getElementById('taskState').innerText = msg;
+                localFinalize(success);
+                onDone(success);
+                localTaskActive = false;
+            };
+
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        const data = JSON.parse(xhr.responseText);
+                        localLog(`Imported: ${(data.imported || []).join(', ')}`);
+                        finish(true, 'Done');
+                        fetchRegions();
+                    } catch (e) {
+                        localLog('Error: ' + e.message);
+                        finish(false, 'Error');
+                    }
+                } else {
+                    let errMsg = 'Import failed';
+                    try { errMsg = JSON.parse(xhr.responseText).error || errMsg; } catch {}
+                    localLog('Error: ' + errMsg);
+                    finish(false, 'Error');
+                }
+            };
+            xhr.onerror  = () => { localLog('Network error'); finish(false, 'Error'); };
+            xhr.onabort  = () => { localLog('Upload cancelled.'); finish(false, 'Cancelled'); };
+
+            xhr.open('POST', url);
+            xhr.send(formData);
         }
 
         // ── Export ─────────────────────────────────────────────
@@ -664,31 +793,33 @@
         }
 
         // ── Import ─────────────────────────────────────────────
-        async function importZip() {
-            const fileInput = document.getElementById('importFile');
-            if (!fileInput.files.length) return alert('Select a .zip file.');
+        function importZip() {
+            const fileInput = document.getElementById('importFileZip');
+            if (!fileInput.files.length) return alert('ZIP 파일을 선택하세요.');
             const file = fileInput.files[0];
-            showStatus('Import · ZIP', 'Uploading...');
-            try {
-                localLog(`File: ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`);
-                localLog('Uploading to server...');
-                const formData = new FormData(); formData.append('file', file);
-                const res = await fetch('/api/import', { method: 'POST', body: formData });
-                localLog('Upload complete. Extracting...');
-                document.getElementById('taskState').innerText = 'Applying...';
-                if (!res.ok) throw new Error((await res.json()).error || 'Import failed');
-                const { imported = [] } = await res.json();
-                localLog(`Imported: ${imported.join(', ')}`);
-                document.getElementById('taskState').innerText = 'Done';
-                localFinalize(true);
-                fetchRegions();
-            } catch (e) {
-                localLog('Error: ' + e.message);
-                document.getElementById('taskState').innerText = 'Error';
-                localFinalize(false);
-            } finally {
-                localTaskActive = false;
-            }
+            localLog(`파일: ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`);
+            const formData = new FormData();
+            formData.append('file', file);
+            doImportXhr('/api/import', formData, 'Import · ZIP', 'progressWrapZip', 'progressFillZip', 'progressTextZip', (ok) => {
+                if (ok) fileInput.value = '';
+            });
+        }
+
+        function importFiles() {
+            const dbInput = document.getElementById('importFileDb');
+            const mbInput = document.getElementById('importFileMbtiles');
+            if (!dbInput.files.length)  return alert('db.json 파일을 선택하세요.');
+            if (!mbInput.files.length) return alert('.mbtiles 파일을 선택하세요.');
+            const dbFile = dbInput.files[0];
+            const mbFile = mbInput.files[0];
+            localLog(`db.json: ${dbFile.name} (${(dbFile.size/1024).toFixed(0)} KB)`);
+            localLog(`.mbtiles: ${mbFile.name} (${(mbFile.size/1024/1024).toFixed(1)} MB)`);
+            const formData = new FormData();
+            formData.append('dbJson', dbFile);
+            formData.append('mbtiles', mbFile);
+            doImportXhr('/api/import-files', formData, 'Import · Files', 'progressWrapFiles', 'progressFillFiles', null, (ok) => {
+                if (ok) { dbInput.value = ''; mbInput.value = ''; }
+            });
         }
 
         // ── Build status polling ───────────────────────────────

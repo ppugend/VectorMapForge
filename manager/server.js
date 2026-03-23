@@ -590,6 +590,31 @@ adminApp.post('/api/export', (req, res) => {
   res.send(zip.toBuffer());
 });
 
+adminApp.post('/api/import-files', upload.fields([{ name: 'dbJson', maxCount: 1 }, { name: 'mbtiles', maxCount: 1 }]), (req, res) => {
+  const dbFile      = req.files?.dbJson?.[0];
+  const mbtilesFile = req.files?.mbtiles?.[0];
+  try {
+    if (!dbFile)      throw new Error('db.json file is required');
+    if (!mbtilesFile) throw new Error('.mbtiles file is required');
+    const importDb   = JSON.parse(fs.readFileSync(dbFile.path, 'utf8'));
+    const regionId   = mbtilesFile.originalname.replace(/\.mbtiles$/, '');
+    const destPath   = path.join(DATA_DIR, 'mbtiles', `${regionId}.mbtiles`);
+    closeMbtilesDb(regionId);
+    fs.copyFileSync(mbtilesFile.path, destPath);
+    for (const id in importDb.regions) {
+      db.regions[id] = importDb.regions[id];
+      generateRegionStyle(id);
+    }
+    generateRegionStyle('global');
+    saveDb();
+    res.json({ ok: true, imported: Object.keys(importDb.regions) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+  finally {
+    if (dbFile)                         fs.unlink(dbFile.path, () => {});
+    if (mbtilesFile?.path && fs.existsSync(mbtilesFile.path)) fs.unlink(mbtilesFile.path, () => {});
+  }
+});
+
 adminApp.post('/api/import', upload.single('file'), (req, res) => {
   try {
     const zip = new AdmZip(req.file.path);
