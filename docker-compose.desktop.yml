@@ -1,24 +1,43 @@
 services:
-  manager:
-    image: oven/bun:alpine
-    container_name: vectormapforge
+  tileserver:
+    image: ghcr.io/vinayakkulkarni/tileserver-rs:latest
+    container_name: vmf-tileserver
+    expose:
+      - "8080"
+    volumes:
+      - osm_persistent_data:/data:ro
+    environment:
+      - RUST_LOG=info
+    command: ["./tileserver-rs", "/data"]
+    restart: unless-stopped
+
+  dashboard:
+    image: oven/bun:1.1-alpine
+    container_name: vmf-dashboard
     working_dir: /app
     ports:
-      - "8050:3000"           # public : tiles, viewer
-      - "127.0.0.1:8051:3001" # admin  : build manager (localhost only)
+      - "${PUBLIC_PORT:-8050}:3000"
+      - "127.0.0.1:${ADMIN_PORT:-8051}:3001"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock  # required for Planetiler builds
       - ./manager:/app
-      - osm_data:/osm_data
-      - osm_temp:/osm_temp
+      - osm_persistent_data:/data
+      - osm_build_temp:/tmp
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - DATA_DIR=/osm_data
-      - TEMP_DIR=/osm_temp
+      - NODE_ENV=production
+      - DATA_DIR=/data
+      - TEMP_DIR=/tmp
+      - PUBLIC_PORT=3000
+      - ADMIN_PORT=3001
+      - TILESERVER_URL=http://tileserver:8080
+      - BUILD_DISABLED=false
     command: sh -c "apk add --no-cache docker-cli curl tar unzip && bun install && bun server.js"
     restart: unless-stopped
 
 volumes:
-  osm_data:
+  osm_persistent_data:
     name: osm_persistent_data
-  osm_temp:
+    driver: local
+  osm_build_temp:
     name: osm_build_temp
+    driver: local

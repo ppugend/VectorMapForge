@@ -213,11 +213,6 @@
             </div>
         </details>
 
-        <details id="mapsAccordion" style="margin-bottom:10px;">
-            <summary id="mapsAccordionSummary" style="cursor:pointer; padding:8px 10px; background:#f0f0f0; border-radius:4px; font-weight:bold; user-select:none;">🗺️ Downloaded Maps (0)</summary>
-            <div id="mapLinks" style="padding:10px; display:flex; flex-wrap:wrap; gap:8px; background:#fafafa; border:1px solid #eee; border-top:none; border-radius:0 0 4px 4px;"></div>
-        </details>
-
         <table>
             <thead>
                 <tr>
@@ -341,17 +336,23 @@
             const res = await fetch('/api/sources');
             sourcesData = await res.json();
             const sel = document.getElementById('sourceSelect');
-            sel.innerHTML = sourcesData.map(s =>
+            const allOption = '<option value="all">All Sources — Combined view of all regions</option>';
+            sel.innerHTML = allOption + sourcesData.map(s =>
                 `<option value="${s.id}">${s.name} — ${s.desc}</option>`
             ).join('');
-            currentSource = sourcesData[0]?.id || 'geofabrik';
+            currentSource = 'all';
+            sel.value = 'all';
             updateMirrorDropdown(currentSource);
         }
 
         function updateMirrorDropdown(sourceId) {
             const source = sourcesData.find(s => s.id === sourceId);
             const sel = document.getElementById('mirrorSelect');
-            if (!source?.mirrors?.length) { sel.style.display = 'none'; return; }
+            if (sourceId === 'all' || !source?.mirrors?.length) {
+                sel.style.display = 'none';
+                document.getElementById('customMirrorInput').style.display = 'none';
+                return;
+            }
             sel.style.display = '';
             sel.innerHTML = source.mirrors.map(m =>
                 `<option value="${m.id}">${m.name}</option>`
@@ -501,7 +502,7 @@
                 }
 
                 const sizeStr = r.hasMbtiles
-                    ? ` <small style="color:#888">(${r.mbtilesSize ? fmtSize(r.mbtilesSize) : '?'}${r.pbfBytes ? ' · PBF ' + fmtSize(r.pbfBytes) : ''})</small>` : '';
+                    ? ` <small style="color:#666">· ${r.mbtilesSize ? fmtSize(r.mbtilesSize) : '?'}${r.pbfBytes ? ' · PBF ' + fmtSize(r.pbfBytes) : ''}</small>` : '';
 
                 const viewerLink = r.hasMbtiles
                     ? `<a class="map-link" href="${viewerHref(r.id, r.center)}" target="_blank" title="Admin viewer — lat/lng">🗺️ admin lat/lng</a>`
@@ -515,9 +516,9 @@
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td><input type="checkbox" name="regionSelect" value="${r.id}" ${!r.hasMbtiles ? 'disabled' : ''}></td>
-                    <td><strong>${r.name}</strong><br><small>${r.id}</small></td>
+                    <td><strong>${r.name}</strong>${sizeStr}<br><small>${r.id}</small></td>
                     <td><small>${r.parent || '-'}</small></td>
-                    <td>${statusHtml}${sizeStr}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
+                    <td>${statusHtml}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
                     <td>${formatDate(s.lastCheck)}<br><small>${s.remoteMd5 ? s.remoteMd5.substring(0,8) : '-'}</small></td>
                     <td><div class="action-cell">
                         ${buildDisabled
@@ -554,34 +555,7 @@
         }
 
         function updateMapLinks() {
-            const downloaded = allRegions.filter(r => r.hasMbtiles);
-            const summary   = document.getElementById('mapsAccordionSummary');
-            const container = document.getElementById('mapLinks');
-
-            summary.textContent = `🗺️ Downloaded Maps (${downloaded.length})`;
-
-            if (downloaded.length === 0) {
-                container.innerHTML = '<span style="color:#888; padding:4px;">No maps downloaded from this source.</span>';
-                return;
-            }
-
-            container.innerHTML = downloaded.map(r => {
-                const c = tileCenters[r.id] || (r.center ? { lng: r.center[0], lat: r.center[1] } : null);
-                const coordStr = c ? `lat=${c.lat.toFixed(6)}, lng=${c.lng.toFixed(6)}, zoom=15` : 'Coords: TileJSON center';
-                const sizes = [r.mbtilesSize ? fmtSize(r.mbtilesSize) : null, r.pbfBytes ? 'PBF ' + fmtSize(r.pbfBytes) : null].filter(Boolean).join(' · ');
-                return `<div class="map-card">
-                    <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
-                        <strong>${r.name}</strong>
-                        <a href="${viewerHref(r.id, r.center)}" target="_blank" style="font-size:12px" title="Admin viewer — lat/lng">🗺️ admin lat/lng</a>
-                        <a href="${viewerZxyHref(r.id, r.center)}" target="_blank" style="font-size:12px" title="Admin viewer — zxy">🗺️ admin zxy</a>
-                        <a href="${publicViewerHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888" title="Public port (8050) viewer — lat/lng">🌐 public lat/lng</a>
-                        <a href="${publicViewerZxyHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888" title="Public port (8050) viewer — zxy">🌐 public zxy</a>
-                        <a href="${publicTileHref(r.id, r.center)}" target="_blank" style="font-size:12px;color:#888" title="Public tile download — .pbf">🌐 public tile</a>
-                    </div>
-                    <small>${r.id}${sizes ? ' · ' + sizes : ''}</small>
-                    <small style="color:#777">${coordStr}</small>
-                </div>`;
-            }).join('');
+            // Downloaded Maps section removed - use source filter "All" instead
         }
 
         async function refreshSource() {

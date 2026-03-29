@@ -8,6 +8,7 @@ const AdmZip = require('adm-zip');
 const multer = require('multer');
 const { Database } = require('bun:sqlite');
 const { gunzipSync, gzipSync } = require('zlib');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const PUBLIC_PORT    = parseInt(process.env.PUBLIC_PORT || '3000');
 const ADMIN_PORT     = parseInt(process.env.ADMIN_PORT  || '3001');
@@ -184,6 +185,160 @@ function closeMbtilesDb(regionId) {
   mbtilesCache.delete(regionId);
 }
 
+const regionBoundsIndex = new Map();
+let regionBoundsLoaded = false;
+
+function loadRegionBoundsIndex() {
+  if (regionBoundsLoaded) return;
+  regionBoundsIndex.clear();
+  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
+  if (!fs.existsSync(mbtilesDir)) return;
+  
+  for (const file of fs.readdirSync(mbtilesDir)) {
+    if (!file.endsWith('.mbtiles') || file === 'global.mbtiles') continue;
+    const id = file.replace('.mbtiles', '');
+    const db = getMbtilesDb(id);
+    if (!db) continue;
+    
+    try {
+      const meta = {};
+      db.query('SELECT name, value FROM metadata').all()
+        .forEach(r => { meta[r.name] = r.value; });
+      
+      regionBoundsIndex.set(id, {
+        bounds: meta.bounds ? meta.bounds.split(',').map(Number) : [-180, -85, 180, 85],
+        minzoom: parseInt(meta.minzoom) || 0,
+        maxzoom: parseInt(meta.maxzoom) || 14,
+      });
+    } catch (e) {
+      console.warn(`Failed to load bounds for ${id}:`, e.message);
+    }
+  }
+  regionBoundsLoaded = true;
+  console.log(`Loaded bounds for ${regionBoundsIndex.size} regions`);
+}
+
+function invalidateRegionBoundsIndex() {
+  regionBoundsLoaded = false;
+  regionBoundsIndex.clear();
+}
+
+function getTileBounds(z, x, y) {
+  const n = Math.pow(2, z);
+  const lonLeft = (x / n) * 360 - 180;
+  const lonRight = ((x + 1) / n) * 360 - 180;
+  const latTop = tileYToLat(y, n);
+  const latBottom = tileYToLat(y + 1, n);
+  return [lonLeft, latBottom, lonRight, latTop];
+}
+
+function tileYToLat(y, n) {
+  const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n)));
+  return latRad * 180 / Math.PI;
+}
+
+function tileIntersectsRegion(z, x, y, regionInfo) {
+  const { bounds, minzoom, maxzoom } = regionInfo;
+  if (z < minzoom || z > maxzoom) return false;
+  
+  const [minLon, minLat, maxLon, maxLat] = bounds;
+  const [tMinLon, tMinLat, tMaxLon, tMaxLat] = getTileBounds(z, x, y);
+  
+  return tMinLon < maxLon && tMaxLon > minLon &&
+         tMinLat < maxLat && tMaxLat > minLat;
+}
+
+function getRelevantRegionsForTile(z, x, y) {
+  loadRegionBoundsIndex();
+  const relevant = [];
+  for (const [id, info] of regionBoundsIndex) {
+    if (tileIntersectsRegion(z, x, y, info)) {
+      relevant.push(id);
+    }
+  }
+  return relevant;
+}
+
+function buildGlobalMbtiles() {
+  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
+  const globalPath = path.join(mbtilesDir, 'global.mbtiles');
+  const tmpPath = globalPath + '.tmp';
+  
+  if (!fs.existsSync(mbtilesDir)) return false;
+  
+  const regionFiles = fs.readdirSync(mbtilesDir)
+    .filter(f => f.endsWith('.mbtiles') && f !== 'global.mbtiles');
+  
+  if (regionFiles.length === 0) return false;
+  
+  console.log(`Building global.mbtiles from ${regionFiles.length} regions...`);
+  
+  try {
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    if (fs.existsSync(globalPath)) fs.unlinkSync(globalPath);
+    
+    const globalDb = new Database(tmpPath);
+    
+    globalDb.run(`
+      CREATE TABLE tiles (
+        zoom_level INTEGER,
+        tile_column INTEGER,
+        tile_row INTEGER,
+        tile_data BLOB
+      );
+      CREATE UNIQUE INDEX idx_tiles ON tiles(zoom_level, tile_column, tile_row);
+      CREATE TABLE metadata (name TEXT, value TEXT);
+    `);
+    
+    const metaStmt = globalDb.prepare('INSERT INTO metadata (name, value) VALUES (?, ?)');
+    metaStmt.run('name', 'Global (all regions merged)');
+    metaStmt.run('format', 'pbf');
+    metaStmt.run('minzoom', '0');
+    metaStmt.run('maxzoom', '14');
+    metaStmt.run('bounds', '-180,-85,180,85');
+    metaStmt.run('center', '0,0,2');
+    metaStmt.run('attribution', '© OpenStreetMap contributors');
+    metaStmt.finalize();
+    
+    for (const file of regionFiles) {
+      const id = file.replace('.mbtiles', '');
+      const regionPath = path.join(mbtilesDir, file);
+      
+      try {
+        globalDb.run(`ATTACH DATABASE '${regionPath}' AS source`);
+        globalDb.run(`
+          INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data)
+          SELECT zoom_level, tile_column, tile_row, tile_data FROM source.tiles
+        `);
+        globalDb.run(`DETACH DATABASE source`);
+        console.log(`  Merged: ${id}`);
+      } catch (e) {
+        console.warn(`  Failed to merge ${id}:`, e.message);
+      }
+    }
+    
+    globalDb.close();
+    fs.renameSync(tmpPath, globalPath);
+    
+    const verifyDb = new Database(globalPath, { readonly: true });
+    const count = verifyDb.query('SELECT COUNT(*) as c FROM tiles').get().c;
+    verifyDb.close();
+    
+    console.log(`Built global.mbtiles with ${count} tiles`);
+    return true;
+  } catch (e) {
+    console.error('Failed to build global.mbtiles:', e.message);
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    return false;
+  }
+}
+
+function getGlobalMbtilesDb() {
+  const globalPath = path.join(DATA_DIR, 'mbtiles', 'global.mbtiles');
+  if (!fs.existsSync(globalPath)) return null;
+  return getMbtilesDb('global');
+}
+
 // ── Style generation ──────────────────────────────────────────────────────────
 function generateRegionStyle(regionId) {
   const baseStylePath = path.join(TILESERVER_ROOT, 'styles/osm-bright/style.json');
@@ -299,6 +454,8 @@ function getPublicOrigin(req) {
 const publicApp = express();
 publicApp.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); next(); });
 
+const tileserverUrl = process.env.TILESERVER_URL || 'http://localhost:8080';
+
 publicApp.get('/favicon.ico', (req, res) => res.redirect('/favicon.svg'));
 publicApp.get('/favicon.svg',  (req, res) => res.sendFile(path.join(__dirname, 'public/favicon.svg')));
 publicApp.get('/viewer.html',  (req, res) => res.sendFile(path.join(__dirname, 'public/viewer.html')));
@@ -327,21 +484,29 @@ publicApp.get('/data/global/:z/:x/:y.pbf', (req, res) => {
   let zi = parseInt(z), xi = parseInt(x), yi = parseInt(y);
   if (zi > 14) { const s = zi - 14; xi >>= s; yi >>= s; zi = 14; }
   const tmsY = (1 << zi) - 1 - yi;
-  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
-  if (!fs.existsSync(mbtilesDir)) return res.status(204).end();
-  const regionIds = fs.readdirSync(mbtilesDir)
-    .filter(f => f.endsWith('.mbtiles'))
-    .map(f => f.replace('.mbtiles', ''));
 
-  // Collect raw gzipped tile data from every mbtiles that has this tile
   const tileBuffers = [];
-  for (const id of regionIds) {
-    const mdb = getMbtilesDb(id);
-    if (!mdb) continue;
+  const relevantRegions = getRelevantRegionsForTile(zi, xi, yi);
+  
+  for (const regionId of relevantRegions) {
     try {
+      const mdb = getMbtilesDb(regionId);
+      if (!mdb) continue;
       const row = mdb.query('SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?').get(zi, xi, tmsY);
       if (row) tileBuffers.push(Buffer.from(row.tile_data));
-    } catch (e) { /* skip broken mbtiles */ }
+    } catch (e) {}
+  }
+  
+  if (tileBuffers.length === 0) {
+    const globalDb = getGlobalMbtilesDb();
+    if (globalDb) {
+      try {
+        const row = globalDb.query('SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?').get(zi, xi, tmsY);
+        if (row) tileBuffers.push(Buffer.from(row.tile_data));
+      } catch (e) {
+        console.error('Error querying global.mbtiles:', e.message);
+      }
+    }
   }
 
   if (tileBuffers.length === 0) return res.status(204).end();
@@ -350,18 +515,10 @@ publicApp.get('/data/global/:z/:x/:y.pbf', (req, res) => {
   res.set('Content-Encoding', 'gzip');
   res.set('Cache-Control', 'public, max-age=86400');
 
-  if (tileBuffers.length === 1) return res.send(tileBuffers[0]);
-
-  // Merge: protobuf vector tile = repeated Layer messages.
-  // Concatenating the raw decoded bytes of multiple tiles produces a valid merged tile
-  // because protobuf repeated fields are wire-compatible when concatenated.
-  try {
-    const rawBuffers = tileBuffers.map(buf => gunzipSync(buf));
-    return res.send(gzipSync(Buffer.concat(rawBuffers)));
-  } catch (e) {
-    // Fallback: return first tile if merge fails
-    return res.send(tileBuffers[0]);
-  }
+  const largestTile = tileBuffers.reduce((largest, current) => 
+    current.length > largest.length ? current : largest
+  );
+  return res.send(largestTile);
 });
 
 publicApp.get('/data/:id.json', (req, res) => {
@@ -430,10 +587,62 @@ publicApp.get('/fonts/:fontstack/:range.pbf', (req, res) => {
   res.sendFile(fontPath);
 });
 
+publicApp.get('/data.json', (req, res) => {
+  const origin = getPublicOrigin(req);
+  const sources = [];
+  
+  sources.push({
+    tilejson: '3.0.0',
+    id: 'global',
+    tiles: [`${origin}/data/global/{z}/{x}/{y}.pbf`],
+    name: 'Global (all regions merged)',
+    attribution: '© OpenStreetMap contributors',
+    minzoom: 0,
+    maxzoom: 14,
+    bounds: [-180, -85, 180, 85],
+    center: [0, 0, 2]
+  });
+  
+  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
+  if (fs.existsSync(mbtilesDir)) {
+    for (const file of fs.readdirSync(mbtilesDir)) {
+      if (!file.endsWith('.mbtiles') || file === 'global.mbtiles') continue;
+      const id = file.replace('.mbtiles', '');
+      try {
+        const mdb = getMbtilesDb(id);
+        if (!mdb) continue;
+        const meta = {};
+        mdb.query('SELECT name, value FROM metadata').all().forEach(r => { meta[r.name] = r.value; });
+        sources.push({
+          tilejson: '3.0.0',
+          id: id,
+          tiles: [`${origin}/data/${id}/{z}/{x}/{y}.pbf`],
+          name: meta.name || id,
+          description: meta.description || '',
+          attribution: meta.attribution || '© OpenStreetMap contributors',
+          minzoom: parseInt(meta.minzoom) || 0,
+          maxzoom: parseInt(meta.maxzoom) || 14,
+          bounds: meta.bounds ? meta.bounds.split(',').map(Number) : [-180, -85, 180, 85],
+          center: meta.center ? meta.center.split(',').map(Number) : [0, 0, 2]
+        });
+      } catch (e) {}
+    }
+  }
+  
+  res.json(sources);
+});
+
+publicApp.use('/data', createProxyMiddleware({
+  target: tileserverUrl,
+  changeOrigin: true
+}));
+
 // ── Admin app ─────────────────────────────────────────────────────────────────
 const adminApp = express();
 adminApp.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); next(); });
 adminApp.use(express.json());
+adminApp.get('/api/health', (req, res) => res.json({ status: 'healthy', timestamp: new Date().toISOString() }));
+
 adminApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
 adminApp.use(publicApp);
 adminApp.use(express.static(path.join(__dirname, 'public')));
@@ -476,7 +685,23 @@ adminApp.get('/api/tiles', (req, res) => {
 
 adminApp.get('/api/regions', (req, res) => {
   const sourceId = req.query.source || 'geofabrik';
-  const regions = (regionsBySource[sourceId] || []).map(r => {
+  let sourceRegions = [];
+  
+  if (sourceId === 'all') {
+    const seen = new Set();
+    for (const source of SOURCES) {
+      for (const r of (regionsBySource[source.id] || [])) {
+        if (!seen.has(r.id)) {
+          seen.add(r.id);
+          sourceRegions.push(r);
+        }
+      }
+    }
+  } else {
+    sourceRegions = regionsBySource[sourceId] || [];
+  }
+  
+  const regions = sourceRegions.map(r => {
     const mbtilesPath = path.join(DATA_DIR, 'mbtiles', `${r.id}.mbtiles`);
     const hasMbtiles  = fs.existsSync(mbtilesPath);
     return {
@@ -509,7 +734,7 @@ adminApp.post('/api/cancel', (req, res) => {
   setTimeout(() => { currentTask = null; }, 5000);
 });
 
-adminApp.post('/api/remove', (req, res) => {
+adminApp.post('/api/remove', async (req, res) => {
   const { regionId } = req.body;
   if (!regionId) return res.status(400).json({ error: 'regionId required' });
   try {
@@ -518,6 +743,8 @@ adminApp.post('/api/remove', (req, res) => {
     if (fs.existsSync(p)) fs.unlinkSync(p);
     delete db.regions[regionId];
     saveDb();
+    invalidateRegionBoundsIndex();
+    setImmediate(() => buildGlobalMbtiles());
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -590,7 +817,7 @@ adminApp.post('/api/export', (req, res) => {
   res.send(zip.toBuffer());
 });
 
-adminApp.post('/api/import-files', upload.fields([{ name: 'dbJson', maxCount: 1 }, { name: 'mbtiles', maxCount: 50 }]), (req, res) => {
+adminApp.post('/api/import-files', upload.fields([{ name: 'dbJson', maxCount: 1 }, { name: 'mbtiles', maxCount: 50 }]), async (req, res) => {
   const dbFile       = req.files?.dbJson?.[0];
   const mbtilesFiles = req.files?.mbtiles || [];
   try {
@@ -609,6 +836,8 @@ adminApp.post('/api/import-files', upload.fields([{ name: 'dbJson', maxCount: 1 
     }
     generateRegionStyle('global');
     saveDb();
+    invalidateRegionBoundsIndex();
+    setImmediate(() => buildGlobalMbtiles());
     res.json({ ok: true, imported: Object.keys(importDb.regions) });
   } catch (e) { res.status(500).json({ error: e.message }); }
   finally {
@@ -617,7 +846,7 @@ adminApp.post('/api/import-files', upload.fields([{ name: 'dbJson', maxCount: 1 
   }
 });
 
-adminApp.post('/api/import', upload.single('file'), (req, res) => {
+adminApp.post('/api/import', upload.single('file'), async (req, res) => {
   try {
     const zip = new AdmZip(req.file.path);
     const dbEntry = zip.getEntry('db.json');
@@ -633,11 +862,33 @@ adminApp.post('/api/import', upload.single('file'), (req, res) => {
       db.regions[id] = importDb.regions[id];
       generateRegionStyle(id);
     }
-    generateRegionStyle('global'); // regenerate merged style with all regions
+    generateRegionStyle('global');
     saveDb();
+    invalidateRegionBoundsIndex();
+    setImmediate(() => buildGlobalMbtiles());
     res.json({ ok: true, imported: Object.keys(importDb.regions) });
   } catch (e) { res.status(500).json({ error: e.message }); }
   finally { if (req.file) fs.unlink(req.file.path, () => {}); }
+});
+
+adminApp.post('/api/regenerate-styles', (req, res) => {
+  const mbtilesDir = path.join(DATA_DIR, 'mbtiles');
+  if (!fs.existsSync(mbtilesDir)) return res.status(404).json({ error: 'MBTiles directory not found' });
+  
+  const files = fs.readdirSync(mbtilesDir).filter(f => f.endsWith('.mbtiles') && f !== 'global.mbtiles');
+  const results = [];
+  
+  for (const file of files) {
+    const regionId = file.replace('.mbtiles', '');
+    try {
+      generateRegionStyle(regionId);
+      results.push({ id: regionId, generated: true });
+    } catch (e) {
+      results.push({ id: regionId, generated: false, error: e.message });
+    }
+  }
+  generateRegionStyle('global');
+  res.json({ results });
 });
 
 adminApp.post('/api/update', async (req, res) => {
@@ -716,7 +967,9 @@ adminApp.post('/api/update', async (req, res) => {
     };
     saveDb();
     generateRegionStyle(region.id);
-    generateRegionStyle('global'); // regenerate merged style with all regions
+    generateRegionStyle('global');
+    invalidateRegionBoundsIndex();
+    setImmediate(() => buildGlobalMbtiles());
 
     currentTask.status = 'Completed';
     log('--- DONE ---');
@@ -740,12 +993,13 @@ async function start() {
     provisionFonts().catch(e => console.error('Font provisioning failed:', e.message)),
     ...SOURCES.map(s => loadSourceIndex(s).catch(e => console.error(`${s.id} index load failed:`, e.message))),
   ]);
-  generateRegionStyle('global'); // build merged global style from all available MBTiles
-  http.createServer(publicApp).listen(PUBLIC_PORT, () =>
-    console.log(`Public server : http://0.0.0.0:${PUBLIC_PORT}`)
+  generateRegionStyle('global');
+  setImmediate(() => buildGlobalMbtiles());
+  http.createServer(publicApp).listen(PUBLIC_PORT, '0.0.0.0', () =>
+    console.log(`Public server  : http://0.0.0.0:${PUBLIC_PORT}`)
   );
-  http.createServer(adminApp).listen(ADMIN_PORT, () =>
-    console.log(`Admin  server : http://127.0.0.1:${ADMIN_PORT}`)
+  http.createServer(adminApp).listen(ADMIN_PORT, '0.0.0.0', () =>
+    console.log(`Admin server   : http://0.0.0.0:${ADMIN_PORT} (Docker restricts to localhost:8051)`)
   );
 }
 start();
