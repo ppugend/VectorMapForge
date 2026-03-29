@@ -44,10 +44,11 @@ Self-hosted OpenStreetMap vector tile server with ultra-low memory footprint. Ru
 
 | Feature | VectorMapForge | Traditional Stack |
 |---------|---------------|-------------------|
-| **Memory** | ~55MB total | 400MB+ (Node.js + JVM) |
-| **Server CPU** | Low (static binary) | High (JVM running) |
+| **Memory (Serve)** | ~55MB (Bun + Rust) | 400MB+ (Node.js + JVM always running) |
+| **Memory (Build)** | 2-6GB temporary (JVM only during build) | 400MB+ constant |
+| **Server CPU** | Low (Rust tileserver, no JVM overhead) | High (JVM constantly running) |
 | **Build** | Desktop only | Anywhere |
-| **Cost** | Free tier friendly | Needs paid VPS |
+| **Cost** | Free tier friendly (serve: 1GB RAM, build: 4GB+ RAM) | Needs paid VPS |
 
 ## Quick Start
 
@@ -64,9 +65,9 @@ docker compose -f docker-compose.desktop.yml up -d
 # 2. Open dashboard
 curl http://localhost:8051  # Web UI will open
 
-# 3. Build tiles (example: Bangkok)
-# - Search "bangkok" in dashboard (Source: BBBike)
-# - Click Download/Build (takes 5-30 min depending on region size)
+# 3. Build tiles (example: Monaco)
+# - Search "monaco" in dashboard (Source: Geofabrik)
+# - Click Download/Build (takes 1-2 min for small regions)
 # - Verify at http://localhost:8050/data.json
 ```
 
@@ -84,8 +85,11 @@ curl http://localhost:8051  # Web UI will open
 For deploying on a VPS with minimal resources:
 
 ```bash
-# 1. Copy server compose file only
+# 1. Copy required files to server
 scp docker-compose.server.yml user@your-server:/opt/vectormapforge/
+scp -r manager user@your-server:/opt/vectormapforge/
+
+# Note: The 'manager' folder contains the Express server code and must be present
 
 # 2. On server, start services
 ssh user@your-server
@@ -170,7 +174,7 @@ Use the dashboard UI or automate with API:
 ```bash
 # Export from desktop
 curl -X POST http://localhost:8051/api/export \
-  -d '{"regionIds":["bangkok","thailand"]}' \
+  -d '{"regionIds":["monaco","liechtenstein"]}' \
   --output my-tiles.zip
 
 # Import on server (via SSH tunnel)
@@ -211,13 +215,16 @@ All endpoints accessible publicly (or from Tauri app, browser, etc.):
 **Example:**
 ```bash
 # Get tile
-curl http://localhost:8050/data/bangkok/14/8529/5986.pbf
+curl http://localhost:8050/data/monaco/14/8529/5986.pbf
 
 # Get style
-curl http://localhost:8050/styles/bangkok/style.json
+curl http://localhost:8050/styles/monaco/style.json
 
-# View in browser
-open http://localhost:8050/viewer.html?lat=13.756&lng=100.501&zoom=14
+# View in browser (macOS: open, Linux: xdg-open, Windows: start)
+# macOS:
+open "http://localhost:8050/viewer.html?region=monaco&lat=43.7349&lng=7.4208&zoom=15"
+# Linux:
+xdg-open "http://localhost:8050/viewer.html?region=monaco&lat=43.7349&lng=7.4208&zoom=15"
 ```
 
 ### Admin API (Port 8051, localhost only)
@@ -294,10 +301,16 @@ docker compose -f docker-compose.desktop.yml up -d
 ### View tiles in map
 ```bash
 # Built-in viewer
+# macOS:
 open http://localhost:8050
+# Linux:
+xdg-open http://localhost:8050
 
-# Or use MapLibre
-open "http://localhost:8050/viewer.html?lat=13.756&lng=100.501&zoom=14"
+# Or use MapLibre with specific coordinates (Monaco example)
+# macOS:
+open "http://localhost:8050/viewer.html?region=monaco&lat=43.7349&lng=7.4208&zoom=15"
+# Linux:
+xdg-open "http://localhost:8050/viewer.html?region=monaco&lat=43.7349&lng=7.4208&zoom=15"
 ```
 
 ## Data Attribution

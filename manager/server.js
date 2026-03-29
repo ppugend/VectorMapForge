@@ -459,6 +459,7 @@ const tileserverUrl = process.env.TILESERVER_URL || 'http://localhost:8080';
 publicApp.get('/favicon.ico', (req, res) => res.redirect('/favicon.svg'));
 publicApp.get('/favicon.svg',  (req, res) => res.sendFile(path.join(__dirname, 'public/favicon.svg')));
 publicApp.get('/viewer.html',  (req, res) => res.sendFile(path.join(__dirname, 'public/viewer.html')));
+publicApp.get('/health', (req, res) => res.json({ status: 'healthy', timestamp: new Date().toISOString() }));
 publicApp.use('/sprites', express.static(path.join(__dirname, 'public/sprites')));
 
 // Global merged tile endpoint — queries all loaded MBTiles in sequence, returns first match.
