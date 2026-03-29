@@ -2,6 +2,12 @@
 
 Self-hosted OpenStreetMap vector tile server with ultra-low memory footprint. Runs on a $5/month VPS or your laptop.
 
+## Screenshots
+
+| Server Dashboard | Forge (Build Manager) | Map Viewer |
+|:---:|:---:|:---:|
+| ![Server](images/screenshot_010.png) | ![Forge](images/screenshot_020.png) | ![Map](images/screenshot_030.png) |
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Desktop (Build + Serve)                                         │
