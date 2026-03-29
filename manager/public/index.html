@@ -217,7 +217,7 @@
             <thead>
                 <tr>
                     <th><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th>
-                    <th>Region</th>
+                    <th>Region (Server-ID)</th>
                     <th>Parent</th>
                     <th>Local Status</th>
                     <th>Latest Check</th>
@@ -364,10 +364,15 @@
         function onSourceChange(val) {
             currentSource = val;
             currentPage = 1;
-            document.getElementById('searchInput').value = '';
-            document.getElementById('clearSearchBtn').style.display = 'none';
+            // Keep search filter - don't clear it
             updateMirrorDropdown(val);
-            fetchRegions();
+            fetchRegions().then(() => {
+                // Re-apply current search filter to new source
+                const currentSearch = document.getElementById('searchInput').value;
+                if (currentSearch) {
+                    applyFilter(currentSearch);
+                }
+            });
         }
 
         function onMirrorChange(val) {
@@ -502,7 +507,7 @@
                 }
 
                 const sizeStr = r.hasMbtiles
-                    ? ` <small style="color:#666">· ${r.mbtilesSize ? fmtSize(r.mbtilesSize) : '?'}${r.pbfBytes ? ' · PBF ' + fmtSize(r.pbfBytes) : ''}</small>` : '';
+                    ? `${r.mbtilesSize ? fmtSize(r.mbtilesSize) : '?'}${r.pbfBytes ? ' · PBF ' + fmtSize(r.pbfBytes) : ''}` : '';
 
                 const viewerLink = r.hasMbtiles
                     ? `<a class="map-link" href="${viewerHref(r.id, r.center)}" target="_blank" title="Admin viewer — lat/lng">🗺️ admin lat/lng</a>`
@@ -513,17 +518,18 @@
                     : '';
 
                 const escapedName = r.name.replace(/'/g, "\\'");
+                const sourceId = r._source || r.status?.sourceId || 'unknown';
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td><input type="checkbox" name="regionSelect" value="${r.id}" ${!r.hasMbtiles ? 'disabled' : ''}></td>
-                    <td><strong>${r.name}</strong>${sizeStr}<br><small>${r.id}</small></td>
+                    <td><strong>${r.name}</strong><br><small>${r.id}</small><br><small style="color:#888">Server: ${sourceId}</small></td>
                     <td><small>${r.parent || '-'}</small></td>
-                    <td>${statusHtml}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
+                    <td>${statusHtml}${sizeStr ? '<br><small style="color:#666">' + sizeStr + '</small>' : ''}<br><small>Updated: ${formatDate(s.lastUpdate)}</small></td>
                     <td>${formatDate(s.lastCheck)}<br><small>${s.remoteMd5 ? s.remoteMd5.substring(0,8) : '-'}</small></td>
                     <td><div class="action-cell">
                         ${buildDisabled
                             ? `<button disabled title="Build on desktop, then Import here" style="cursor:not-allowed;opacity:0.5;">${btnText}</button>`
-                            : `<button id="buildBtn-${r.id}" onclick="updateRegion('${r.id}', '${btnText}')">${btnText}</button>`
+                            : `<button id="buildBtn-${r.id}" onclick="updateRegion('${r.id}', '${btnText}', '${sourceId}')">${btnText}</button>`
                         }
                         ${r.hasMbtiles ? `<button class="danger sm" onclick="removeTiles('${r.id}', '${escapedName}')">🗑 Remove</button>` : ''}
                         ${viewerLink}
@@ -615,10 +621,11 @@
         }
 
         // ── Build ──────────────────────────────────────────────
-        async function updateRegion(id, action) {
+        async function updateRegion(id, action, regionSource) {
             if (!confirm(`Confirm ${action} for "${id}"?`)) return;
+            const sourceToUse = regionSource || currentSource;
             try {
-                const res = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionId: id, source: currentSource, mirror: currentMirror, customMirrorBase }) });
+                const res = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regionId: id, source: sourceToUse, mirror: currentMirror, customMirrorBase }) });
                 if (!res.ok) throw new Error((await res.json()).error);
                 pollStatus();
             } catch (err) { alert(err.message); }

@@ -693,12 +693,12 @@ adminApp.get('/api/regions', (req, res) => {
       for (const r of (regionsBySource[source.id] || [])) {
         if (!seen.has(r.id)) {
           seen.add(r.id);
-          sourceRegions.push(r);
+          sourceRegions.push({ ...r, _source: source.id });
         }
       }
     }
   } else {
-    sourceRegions = regionsBySource[sourceId] || [];
+    sourceRegions = (regionsBySource[sourceId] || []).map(r => ({ ...r, _source: sourceId }));
   }
   
   const regions = sourceRegions.map(r => {
