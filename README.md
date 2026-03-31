@@ -12,8 +12,8 @@ Self-hosted OpenStreetMap vector tile server with ultra-low memory footprint. Ru
 ┌─────────────────────────────────────────────────────────────────┐
 │  Desktop (Build + Serve)                                         │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │   Dashboard  │───▶│  Planetiler  │───▶│  MBTiles     │       │
-│  │  (Port 8051) │    │   (JVM)      │    │  (Docker Vol)│       │
+│  │   Dashboard  │───▶│  Tilemaker   │───▶│  MBTiles     │       │
+│  │  (Port 8051) │    │   (C++)      │    │  (Docker Vol)│       │
 │  └──────────────┘    └──────────────┘    └──────┬───────┘       │
 │        │                                         │               │
 │        │         ┌───────────────────────────────┘               │
@@ -51,71 +51,72 @@ Self-hosted OpenStreetMap vector tile server with ultra-low memory footprint. Ru
 | Feature | VectorMapForge | Traditional Stack |
 |---------|---------------|-------------------|
 | **Memory (Serve)** | ~55MB (Bun + Rust) | 400MB+ (Node.js + JVM always running) |
-| **Memory (Build)** | 2-6GB temporary (JVM only during build) | 400MB+ constant |
+| **Memory (Build)** | 2-4GB temporary (C++, no JVM overhead) | 400MB+ constant |
 | **Server CPU** | Low (Rust tileserver, no JVM overhead) | High (JVM constantly running) |
-| **Build** | Desktop only | Anywhere |
+| **Build** | Desktop only¹ | Anywhere |
 | **Cost** | Free tier friendly (serve: 1GB RAM, build: 4GB+ RAM) | Needs paid VPS |
+
+¹ **Why Desktop-only build?** To prevent accidental execution on low-resource VPS servers. Building tiles requires 2-4GB RAM temporarily, which can crash or freeze a $5/month VPS. Always build tiles on your desktop/laptop, then export and import to the server.
 
 ## Quick Start
 
 ### Desktop — Build Your Own Tiles
 
-For users who want to download OSM data and generate tiles locally:
-
 ```bash
 # 1. Clone and start
 git clone https://github.com/ppugend/VectorMapForge.git
 cd VectorMapForge
-docker compose -f docker-compose.desktop.yml up -d
+make desktop
 
 # 2. Open dashboard
-curl http://localhost:8051  # Web UI will open
+open http://localhost:8051  # macOS
+# xdg-open http://localhost:8051  # Linux
+# start http://localhost:8051  # Windows
 
-# 3. Build tiles (example: Monaco)
-# - Search "monaco" in dashboard (Source: Geofabrik)
-# - Click Download/Build (takes 1-2 min for small regions)
-# - Verify at http://localhost:8050/data.json
+# 3. Build tiles (Search "monaco" → Download/Build)
 ```
 
-**System Requirements:**
-- Docker Desktop
-- 4GB RAM (for building tiles)
-- 10GB free disk space
-
-**Ports:**
-- `8050` — Unified endpoint (tiles + styles + fonts), public access
-- `8051` — Dashboard (localhost only, build/import/export)
+**Requirements:** Docker Desktop, 4GB RAM, 10GB disk
 
 ### Server — Serve Pre-built Tiles
 
-For deploying on a VPS with minimal resources:
+⚠️ **Do not build on server!** Build on desktop first, then import.
 
 ```bash
-# 1. Copy required files to server
-scp docker-compose.server.yml user@your-server:/opt/vectormapforge/
-scp -r manager user@your-server:/opt/vectormapforge/
-
-# Note: The 'manager' folder contains the Express server code and must be present
-
-# 2. On server, start services
-ssh user@your-server
-cd /opt/vectormapforge
-docker compose -f docker-compose.server.yml up -d
-
-# 3. Import tiles from desktop (via SSH tunnel)
-# On your local machine:
-ssh -L 8051:localhost:8051 user@your-server
-curl -X POST http://localhost:8051/api/import -F "file=@export.zip"
-
-# 4. Public endpoint ready at:
-# http://your-server:8050/data/{region}/{z}/{x}/{y}.pbf
-# http://your-server:8050/styles/{id}/style.json
+# On server:
+make server
 ```
 
-**Server Requirements:**
-- Docker + Docker Compose
-- 1GB RAM (512MB works for small regions)
-- 5GB disk space
+**Export from desktop → Import to server:**
+
+1. **Desktop:** Build tiles in dashboard → Click "Export" → Download ZIP
+2. **Transfer:** `scp export.zip user@your-server:/tmp/`
+3. **Connect:** `ssh -L 8051:localhost:8051 user@your-server`
+4. **Open:** http://localhost:8051 → Click "Import" → Select ZIP
+
+**Requirements:** Docker, 1GB RAM, 5GB disk
+
+<details>
+<summary>Alternative methods (click to expand)</summary>
+
+**Command line (without dashboard):**
+```bash
+# Export from desktop
+curl -X POST http://localhost:8051/api/export \
+  -d '{"regionIds":["monaco"]}' --output export.zip
+
+# Import to server (via SSH tunnel)
+ssh -L 8051:localhost:8051 user@your-server
+curl -X POST http://localhost:8051/api/import -F "file=@export.zip"
+```
+
+**Scripts without make:**
+```bash
+bash ./start-desktop.sh      # Linux/macOS (desktop only)
+./start-desktop.ps1     # Windows PowerShell (desktop only)
+```
+
+</details>
 
 ## Architecture
 
@@ -148,6 +149,16 @@ Admin Endpoint (Port 8051) - localhost only
 |---------|-----------|--------|---------|
 | Express | Bun + Express | ~25MB | Unified gateway, static files, API |
 | tileserver-rs | Rust | ~25MB | High-performance tile serving (internal) |
+| Tilemaker | C++ | 2-4GB (build only) | Vector tile generation (desktop only) |
+
+**Commands:**
+```bash
+make desktop  # Start desktop mode (build + serve)
+make server   # Start server mode (serve only)
+make down     # Stop all services
+make logs     # View logs
+make status   # Check status
+```
 
 ### Smart Global Tiles
 
@@ -169,7 +180,7 @@ VectorMapForge uses **Docker named volumes** (not bind mounts):
 | `osm_build_temp` | Temporary build files | ❌ No (safe to delete) |
 
 **Why volumes?**
-- Planetiler (build) and tileserver (serve) share the same data space
+- Tilemaker (build) and tileserver (serve) share the same data space
 - No host directory pollution (no `./data` in git status)
 - Better performance than bind mounts
 
@@ -267,11 +278,47 @@ PUBLIC_PORT=8050        # Public endpoint (tiles + styles + fonts)
 ADMIN_PORT=8051         # Admin endpoint (localhost only)
 
 # Build settings (desktop only)
-PLANETILER_JVM_MEMORY=2g  # JVM heap for tile generation
-BUILD_DISABLED=false      # Set to 'true' on server
+TILEMAKER_IMAGE=tilemaker:local-v3.1.0  # Tilemaker Docker image
+BUILD_DISABLED=false                    # Set to 'true' on server
 
 # Internal tileserver URL (for Express proxy)
 TILESERVER_URL=http://tileserver:8080
+```
+
+### Tilemaker Setup
+
+VectorMapForge uses [Tilemaker](https://github.com/systemed/tilemaker) (C++) for vector tile generation instead of Planetiler (Java) for lower memory footprint and faster builds.
+
+**Automatic Setup (Recommended):**
+```bash
+# The Makefile/scripts automatically:
+# 1. Clone https://github.com/ppugend/tilemaker.git
+# 2. Checkout v3.1.0 tag
+# 3. Build Docker image: tilemaker:local-v3.1.0
+# 4. Start all services
+
+make desktop  # One command does it all
+```
+
+**Manual Setup:**
+```bash
+# If you prefer manual control:
+git clone https://github.com/ppugend/tilemaker.git
+cd tilemaker
+git checkout v3.1.0
+docker build -t tilemaker:local-v3.1.0 .
+cd ..
+docker compose -f docker-compose.desktop.yml up -d
+```
+
+**Updating Tilemaker:**
+```bash
+# To update to a newer version:
+cd tilemaker
+git fetch --tags
+git checkout v3.2.0  # or newer version
+cd ..
+docker compose -f docker-compose.desktop.yml build tilemaker
 ```
 
 ### Docker Compose Files
@@ -319,11 +366,28 @@ open "http://localhost:8050/viewer.html?region=monaco&lat=43.7349&lng=7.4208&zoo
 xdg-open "http://localhost:8050/viewer.html?region=monaco&lat=43.7349&lng=7.4208&zoom=15"
 ```
 
+## Tested Environment
+
+This configuration has been tested on:
+
+- **macOS** (x64) - Primary development and testing platform
+
+Other platforms (Linux, Windows, ARM64) should work but have not been explicitly tested. Please report any issues you encounter on different environments.
+
 ## Data Attribution
 
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL)
 
 Tile schema based on [OpenMapTiles](https://openmaptiles.org/)
+
+## Third Party Licenses
+
+This project uses open source components:
+
+- **tileserver-rs**: MIT License
+- **OpenMapTiles schema**: BSD-3-Clause
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full details.
 
 ## License
 

@@ -11,6 +11,14 @@ services:
     command: ["./tileserver-rs", "/data"]
     restart: unless-stopped
 
+  tilemaker:
+    build:
+      context: ./tilemaker
+      dockerfile: Dockerfile
+    image: tilemaker:local-v3.1.0
+    container_name: vmf-tilemaker-build
+    entrypoint: ["echo", "Tilemaker image built successfully"]
+
   dashboard:
     image: oven/bun:1.1-alpine
     container_name: vmf-dashboard
@@ -23,6 +31,7 @@ services:
       - osm_persistent_data:/data
       - osm_build_temp:/tmp
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./tilemaker/resources:/tilemaker-resources:ro
     environment:
       - NODE_ENV=production
       - DATA_DIR=/data
@@ -31,6 +40,8 @@ services:
       - ADMIN_PORT=3001
       - TILESERVER_URL=http://tileserver:8080
       - BUILD_DISABLED=false
+      - TILEMAKER_IMAGE=tilemaker:local-v3.1.0
+      - TILEMAKER_RESOURCES=./tilemaker/resources
     command: sh -c "apk add --no-cache docker-cli curl tar unzip && bun install && bun server.js"
     restart: unless-stopped
 
