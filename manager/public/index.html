@@ -240,7 +240,7 @@
                 <div class="spinner" id="statusSpinner"></div>
                 <span><strong id="taskTitle">Task</strong>: <span id="taskState">Processing...</span></span>
                 <span id="taskElapsed"></span>
-                <button id="toggleLogsBtn" onclick="toggleLogs()">▲ Hide Logs</button>
+                <button id="toggleLogsBtn" onclick="toggleLogs()">▼ Hide Logs</button>
             </div>
             <div style="display:flex;gap:6px;">
                 <button class="cancel" id="cancelBtn" onclick="cancelTask()">⛔ Cancel Task</button>
@@ -271,7 +271,7 @@
         function toggleLogs() {
             logsCollapsed = !logsCollapsed;
             document.getElementById('statusBar').classList.toggle('collapsed', logsCollapsed);
-            document.getElementById('toggleLogsBtn').textContent = logsCollapsed ? '▼ Show Logs' : '▲ Hide Logs';
+            document.getElementById('toggleLogsBtn').textContent = logsCollapsed ? '▲ Show Logs' : '▼ Hide Logs';
         }
         function toggleAll(cb) {
             document.querySelectorAll('input[name="regionSelect"]:not(:disabled)').forEach(c => c.checked = cb.checked);

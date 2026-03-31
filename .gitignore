@@ -1,3 +1,7 @@
+
+# Tilemaker clone directory for build binary
+/tilemaker/
+
 # TileForge
 manager/node_modules/
 *.mbtiles

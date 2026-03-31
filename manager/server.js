@@ -912,7 +912,6 @@ adminApp.post('/api/update', async (req, res) => {
   const pbfPath        = path.join(DATA_DIR, 'pbf', `${region.id}.osm.pbf`);
   const mbtilesPath    = path.join(DATA_DIR, 'mbtiles', `${region.id}.mbtiles`);
   const tmpMbtilesPath = path.join(DATA_DIR, 'mbtiles', `${region.id}_temp.mbtiles`);
-  const jvmMemory = process.env.PLANETILER_JVM_MEMORY || '';
 
   currentTask = { title: `Build · ${region.name}`, region: region.name, regionId: region.id, status: 'Starting...', logs: '', aborted: false };
   const log = m => { if (currentTask) currentTask.logs += m + '\n'; };
@@ -936,21 +935,19 @@ adminApp.post('/api/update', async (req, res) => {
     }
 
     currentTask.status = 'Building vectors...';
-    const jvmEnv = jvmMemory ? [`-e`, `JAVA_TOOL_OPTIONS=-Xmx${jvmMemory}`] : [];
+    const tilemakerImage = process.env.TILEMAKER_IMAGE || 'tilemaker:local-v3.1.0';
+    const tilemakerResources = process.env.TILEMAKER_RESOURCES || './tilemaker/resources';
     await runCommand('docker', [
       'run', '--rm',
-      ...jvmEnv,
       '-v', `osm_persistent_data:${DATA_DIR}`,
       '-v', `osm_build_temp:${TEMP_DIR}`,
-      'ghcr.io/onthegomap/planetiler:latest',
-      `--osm-path=${pbfPath}`,
+      '-v', `${tilemakerResources}:/resources:ro`,
+      tilemakerImage,
+      `--input=${pbfPath}`,
       `--output=${tmpMbtilesPath}`,
-      `--tmpdir=${TEMP_DIR}/work`,
-      `--lake-centerlines-path=${DATA_DIR}/sources/lake_centerline.shp.zip`,
-      `--water-polygons-path=${DATA_DIR}/sources/water-polygons-split-3857.zip`,
-      `--natural-earth-path=${DATA_DIR}/sources/natural_earth_vector.sqlite.zip`,
-      `--wikidata-cache=${DATA_DIR}/sources/wikidata_names.json`,
-      '--download', '--nodemap-type=array', '--force',
+      `--config=/resources/config-openmaptiles.json`,
+      `--process=/resources/process-openmaptiles.lua`,
+      '--fast',
     ], log);
 
     if (currentTask.aborted) throw new Error('Aborted');
