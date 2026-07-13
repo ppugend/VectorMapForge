@@ -452,6 +452,10 @@ function getPublicOrigin(req) {
 
 // ── Public app ────────────────────────────────────────────────────────────────
 const publicApp = express();
+// Honor X-Forwarded-Proto/Host from the TLS-terminating proxy (Cloudflare Tunnel, NPM)
+// so generated URLs in style.json/TileJSON use the client-facing https origin.
+// Spoofed headers only affect the spoofer's own response, so blanket trust is acceptable.
+publicApp.set('trust proxy', true);
 publicApp.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); next(); });
 
 const tileserverUrl = process.env.TILESERVER_URL || 'http://localhost:8080';
