@@ -28,6 +28,13 @@ services:
       - ADMIN_PORT=3001
       - TILESERVER_URL=http://tileserver:8080
       - BUILD_DISABLED=true
+      # Optional fixed origin for URLs in style.json/TileJSON responses (e.g. https://tiles.example.com).
+      # Leave unset in normal setups: the server derives the origin from the X-Forwarded-Proto/Host
+      # headers that TLS-terminating proxies (Cloudflare Tunnel, Nginx Proxy Manager) send by default.
+      # Set only if (a) the proxy does not forward those headers, so generated URLs come out as
+      # http:// and clients hit mixed-content blocks, or (b) the server is reachable via multiple
+      # hostnames and responses must always advertise one canonical domain. No trailing slash.
+      - PUBLIC_URL=${PUBLIC_URL:-}
     command: sh -c "bun install && bun server.js"
     restart: unless-stopped
 

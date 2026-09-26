@@ -10,7 +10,7 @@ Self-hosted OpenStreetMap vector tile server with ultra-low memory footprint. Ru
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Desktop (Build + Serve)                                         │
+│  Desktop Mode (Build + Serve)                                    │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
 │  │   Dashboard  │───▶│  Tilemaker   │───▶│  MBTiles     │       │
 │  │  (Port 8051) │    │   (C++)      │    │  (Docker Vol)│       │
@@ -19,19 +19,15 @@ Self-hosted OpenStreetMap vector tile server with ultra-low memory footprint. Ru
 │        │         ┌───────────────────────────────┘               │
 │        │         ▼                                               │
 │        │    ┌──────────────┐                                     │
-│        └───▶│ Express      │◀── Browser/MapLibre/Tauri          │
-│             │ (Port 8050)  │                                     │
-│             │              │                                     │
-│             │  ├─/data/* ──┼────▶ tileserver-rs (internal)      │
-│             │  ├─/styles/*─┼────▶ static files                  │
-│             │  └─/fonts/* ─┼────▶ static files                  │
-│             └──────────────┘                                     │
+│        └───▶│   Express    │◀── Browser/MapLibre/Tauri          │
+│             │ (Port 8050)  │    ├─/data/*→tileserver-rs(Rust)   │
+│             └──────────────┘    ├─/styles/*, /fonts/* (static)  │
 └─────────────────────────────────────────────────────────────────┘
                                Export
                                   │
                                   ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Server (Serve Only) — OCI Free Tier, 1GB RAM                    │
+│  Server Mode (Serve Only) — OCI Free Tier, 1GB RAM               │
 │  ┌──────────────┐    ┌──────────────┐                           │
 │  │   Dashboard  │◀───│  MBTiles     │                           │
 │  │ (Port 8051)  │    │  (Docker Vol)│                           │
@@ -40,10 +36,26 @@ Self-hosted OpenStreetMap vector tile server with ultra-low memory footprint. Ru
 │         └───────────┐       │                                    │
 │                     ▼       ▼                                    │
 │              ┌──────────────┐                                    │
-│              │ Express      │◀── Browser/MapLibre               │
+│              │   Express    │◀── Browser/MapLibre               │
 │              │ (Port 8050)  │                                    │
 │              └──────────────┘                                    │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+**Components:**
+| Service | Technology | Memory | Purpose |
+|---------|-----------|--------|---------|
+| Express | Bun + Express | ~25MB | Unified gateway, static files, API |
+| tileserver-rs | Rust | ~25MB | High-performance tile serving (internal) |
+| Tilemaker | C++ | 2-4GB (build only) | Vector tile generation (desktop only) |
+
+**Commands:**
+```bash
+make desktop  # Start desktop mode (build + serve)
+make server   # Start server mode (serve only)
+make down     # Stop all services
+make logs     # View logs
+make status   # Check status
 ```
 
 ## Why VectorMapForge?
@@ -66,7 +78,8 @@ Self-hosted OpenStreetMap vector tile server with ultra-low memory footprint. Ru
 # 1. Clone and start
 git clone https://github.com/ppugend/VectorMapForge.git
 cd VectorMapForge
-make desktop
+make desktop              # macOS/Linux
+# mingw32-make desktop   # Windows (Git Bash/MinGW)
 
 # 2. Open dashboard
 open http://localhost:8051  # macOS
@@ -84,7 +97,8 @@ open http://localhost:8051  # macOS
 
 ```bash
 # On server:
-make server
+make server              # macOS/Linux
+# mingw32-make server   # Windows (Git Bash/MinGW)
 ```
 
 **Export from desktop → Import to server:**
@@ -110,55 +124,7 @@ ssh -L 8051:localhost:8051 user@your-server
 curl -X POST http://localhost:8051/api/import -F "file=@export.zip"
 ```
 
-**Scripts without make:**
-```bash
-bash ./start-desktop.sh      # Linux/macOS (desktop only)
-./start-desktop.ps1     # Windows PowerShell (desktop only)
-```
-
 </details>
-
-## Architecture
-
-```
-Unified Endpoint (Port 8050)
-        │
-        ▼
-┌───────────────┐
-│    Express    │ ← Bun runtime, ~25MB
-│  (Bun.js)     │
-└───────┬───────┘
-        │
-        ├─ /data/* ────▶ tileserver-rs (Rust, ~25MB) → MBTiles
-        │
-        ├─ /styles/* ──▶ /data/tileserver/styles/ (static)
-        │
-        └─ /fonts/* ───▶ /data/tileserver/fonts/ (static)
-
-Admin Endpoint (Port 8051) - localhost only
-        │
-        ▼
-┌───────────────┐
-│    Express    │ ← API, management UI
-│  (Bun.js)     │
-└───────────────┘
-```
-
-**Components:**
-| Service | Technology | Memory | Purpose |
-|---------|-----------|--------|---------|
-| Express | Bun + Express | ~25MB | Unified gateway, static files, API |
-| tileserver-rs | Rust | ~25MB | High-performance tile serving (internal) |
-| Tilemaker | C++ | 2-4GB (build only) | Vector tile generation (desktop only) |
-
-**Commands:**
-```bash
-make desktop  # Start desktop mode (build + serve)
-make server   # Start server mode (serve only)
-make down     # Stop all services
-make logs     # View logs
-make status   # Check status
-```
 
 ### Smart Global Tiles
 

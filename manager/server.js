@@ -452,6 +452,10 @@ function getPublicOrigin(req) {
 
 // ── Public app ────────────────────────────────────────────────────────────────
 const publicApp = express();
+// Honor X-Forwarded-Proto/Host from the TLS-terminating proxy (Cloudflare Tunnel, NPM)
+// so generated URLs in style.json/TileJSON use the client-facing https origin.
+// Spoofed headers only affect the spoofer's own response, so blanket trust is acceptable.
+publicApp.set('trust proxy', true);
 publicApp.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); next(); });
 
 const tileserverUrl = process.env.TILESERVER_URL || 'http://localhost:8080';
@@ -936,17 +940,18 @@ adminApp.post('/api/update', async (req, res) => {
 
     currentTask.status = 'Building vectors...';
     const tilemakerImage = process.env.TILEMAKER_IMAGE || 'tilemaker:local-v3.1.0';
-    const tilemakerResources = process.env.TILEMAKER_RESOURCES || './tilemaker/resources';
+    // Use built-in resources from tilemaker image (avoid DinD volume mount issues)
+    // Resources are copied to /usr/src/app/resources/ during image build
     await runCommand('docker', [
       'run', '--rm',
+      '--entrypoint', '/usr/src/app/tilemaker',
       '-v', `osm_persistent_data:${DATA_DIR}`,
       '-v', `osm_build_temp:${TEMP_DIR}`,
-      '-v', `${tilemakerResources}:/resources:ro`,
       tilemakerImage,
       `--input=${pbfPath}`,
       `--output=${tmpMbtilesPath}`,
-      `--config=/resources/config-openmaptiles.json`,
-      `--process=/resources/process-openmaptiles.lua`,
+      `--config=/usr/src/app/resources/config-openmaptiles.json`,
+      `--process=/usr/src/app/resources/process-openmaptiles.lua`,
       '--fast',
     ], log);
 
